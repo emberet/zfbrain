@@ -198,7 +198,7 @@ class Component extends DCLogic {
   // nothing answers, the page says so — it never invents a number.
   LIVE_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:4660' : 'https://live.zfbrain.online';
   STALE_MS = 15000;
-  state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, view: 'page', copied: false, now: Date.now() };
+  state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, stream: true, view: 'page', copied: false, now: Date.now() };
   componentDidMount() {
     this.buildFish();
     this.raf = requestAnimationFrame(() => this.draw());
@@ -233,7 +233,9 @@ class Component extends DCLogic {
   take(feed) {
     const upd = { feed, mode: feed.status === 'live' ? 'live' : (feed.status || 'asleep'), lastSeen: Date.now() };
     if (feed.graph && feed.graph.neurons && (!this.layout || this.layout.n !== feed.graph.neurons)) this.loadLayout(feed.graph.neurons);
-    if (feed.frame && feed.frame.seq !== this.state.frameSeq) { upd.frameSeq = feed.frame.seq; upd.frameSrc = this.LIVE_BASE + '/frame.jpg?seq=' + feed.frame.seq; }
+    if (!this.state.stream && feed.frame && feed.frame.seq !== this.state.frameSeq) {
+      upd.frameSeq = feed.frame.seq; upd.frameSrc = this.LIVE_BASE + '/frame.jpg?seq=' + feed.frame.seq;
+    }
     this.setState(upd);
   }
   isLive() { return this.state.mode === 'live' && this.state.now - this.state.lastSeen < this.STALE_MS; }
@@ -442,6 +444,7 @@ class Component extends DCLogic {
   }
   renderVals() {
     const live = this.isLive(), s = this.state, f = s.feed || {}, dash = '—';
+    const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
     const n = (v) => (v == null ? dash : Number(v).toLocaleString());
     const hhmmss = (t) => new Date(t * 1000).toTimeString().slice(0, 8);
     const names = [['DSGC up','dsgc_up'],['DSGC down','dsgc_down'],['DSGC left','dsgc_left'],['DSGC right','dsgc_right'],['nMLF · bouts','nmlf'],['vSPN · turn','vspn'],['Mauthner · escape','mauthner']];
@@ -480,7 +483,15 @@ class Component extends DCLogic {
       liveWindowLabel: live ? 'live · what the fish sees' : (s.mode === 'connecting' ? 'connecting' : 'asleep'),
       viewLabel: s.view === 'retina' ? 'show page' : 'show retina',
       toggleView: () => this.setState({ view: s.view === 'retina' ? 'page' : 'retina' }),
-      frameImg: React.createElement('img', { src: live && s.frameSrc ? s.frameSrc : 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==', alt: 'what the fish is looking at right now', decoding: 'async', style: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: live && s.frameSrc && !showRetina ? 'block' : 'none' } }),
+      frameImg: React.createElement('img', {
+        // the camera runs on its own clock (see roam.py): /frame.mjpg is a
+        // multipart stream the browser plays inside a plain <img>, so this is
+        // video, not a slideshow. If the stream is capped or dropped, onError
+        // falls back to the polled still.
+        src: live ? (s.stream ? this.LIVE_BASE + '/frame.mjpg' : (s.frameSrc || BLANK)) : BLANK,
+        alt: 'what the fish is looking at right now', decoding: 'async',
+        onError: () => { if (this.state.stream) this.setState({ stream: false }); },
+        style: { position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: live && !showRetina ? 'block' : 'none' } }),
       retinaDisplay: showRetina ? 'grid' : 'none',
       retinaCols: retina ? 'repeat(' + retina.cols + ',1fr)' : 'repeat(18,1fr)',
       retinaRows: retina ? 'repeat(' + retina.rows + ',1fr)' : 'repeat(12,1fr)',
@@ -490,7 +501,8 @@ class Component extends DCLogic {
       cursorDisplay: live ? 'block' : 'none',
       cursorX: (cx * 100).toFixed(2) + '%', cursorY: (cy * 100).toFixed(2) + '%',
       cursorLabel: live && f.cursor ? 'cursor ' + Math.round(cx * 1280) + ' · ' + Math.round(cy * 800) : '',
-      retinaLabel: retina ? 'retina ' + retina.cols + '×' + retina.rows + ' · luminance + flow' : (live ? '' : 'nothing is being streamed right now'),
+      retinaLabel: showRetina ? 'retina ' + retina.cols + '×' + retina.rows + ' · luminance + flow'
+        : (live ? (f.frame && f.frame.fps ? f.frame.fps + ' fps · ' + (s.stream ? 'live stream' : 'stills') : 'live') : 'nothing is being streamed right now'),
       log: (f.events || []).map((e) => ({ t: hhmmss(e.t), msg: e.msg, color: brightKinds[e.kind] ? 'var(--color-bg)' : 'var(--color-accent-200)' })),
       nowT: new Date(s.now).toTimeString().slice(0, 8),
       firingLabel: live && f.brain ? f.brain.firing + ' firing · ' + n(f.brain.spikes_per_sec) + ' spikes/s · ' + f.brain.mean_membrane_mv + ' mV' : 'no run',

@@ -288,10 +288,26 @@ class FishSim:
         return int(src.size)
 
     # -- full epoch -------------------------------------------------------
-    def run(self, n_steps=400, dt=DT):
-        """Run n_steps of biological time. Returns detail dict (see stream())."""
-        for _ in range(n_steps):
-            self._step(dt)
+    def run(self, n_steps=400, dt=DT, tick=None, tick_every=0):
+        """Run n_steps of biological time. Returns detail dict (see stream()).
+
+        `tick` is called every `tick_every` steps, between slices - the roamer
+        uses it to keep its camera running at video rate while the brain
+        thinks, since a whole-brain step takes most of a second. The rate
+        window is still the full n_steps: slicing changes when other work
+        happens, not what the brain computes."""
+        if not tick or tick_every <= 0:
+            for _ in range(n_steps):
+                self._step(dt)
+        else:
+            done = 0
+            while done < n_steps:
+                chunk = min(tick_every, n_steps - done)
+                for _ in range(chunk):
+                    self._step(dt)
+                done += chunk
+                if done < n_steps:
+                    tick()
         self.t += n_steps * dt
         return self.stream(dt, n_steps)
 

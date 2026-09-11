@@ -11,6 +11,7 @@ Everything the fish just did is published, in-process, on 127.0.0.1:4660:
 
     GET /state      the heartbeat (JSON, see heartbeat() for the shape)
     GET /frame.jpg  what the fish is looking at right now (640x400 JPEG)
+    GET /frame.mjpg the same camera as a video stream (multipart/x-mixed-replace)
     GET /events     the same heartbeat as a Server-Sent-Events stream (~2 Hz)
     GET /graph      the running graph: counts, populations, where the layout is
     GET /graph.bin  every neuron's position + population, binary (once per page load)
@@ -81,6 +82,11 @@ VETO_WORDS = (
 VIEW_W, VIEW_H = 1280, 800        # the fish's viewport
 FRAME_W, FRAME_H = 640, 400       # the published frame
 SIM_STEPS = 400                   # 400 x 0.5 ms = 0.2 s of biological time per step
+# The camera is not the brain. A whole-brain step takes most of a second, so a
+# frame per step is a slideshow; instead the camera fires on its own clock
+# between slices of the brain step, and /frame.mjpg streams it as video.
+CAM_FPS = float(os.environ.get("ZF_CAM_FPS", "6"))
+CAM_SLICE = 25                    # brain steps between camera checks (~12 ms of thought)
 DEFAULT_ORIGINS = ("https://zfbrain.online,https://www.zfbrain.online,"
                    "https://zfbrain.pages.dev,http://localhost:8787")
 
@@ -109,17 +115,27 @@ class Feed:
         self.mask = b""          # packed firing bits, one per neuron
         self.mask_seq = 0
         self.sse_clients = 0
+        self.mjpeg_clients = 0
 
-    def publish(self, state, frame=None, mask=None):
+    def publish(self, state, mask=None):
         with self.cond:
             self.state = state
-            if frame is not None:
-                self.frame = frame
-                self.frame_seq = state["frame"]["seq"]
             if mask is not None:
                 self.mask = mask
                 self.mask_seq = state["brain"]["firing_seq"]
             self.cond.notify_all()
+
+    def publish_frame(self, frame):
+        """A camera frame on its own clock — no heartbeat, no brain state."""
+        with self.cond:
+            self.frame = frame
+            self.frame_seq += 1
+            self.cond.notify_all()
+
+    def wait_for_frame(self, seen_seq, timeout):
+        with self.cond:
+            self.cond.wait_for(lambda: self.frame_seq != seen_seq, timeout)
+            return self.frame, self.frame_seq
 
     def wait_for_new(self, seen_seq, timeout):
         """Block until a snapshot newer than seen_seq exists (or timeout)."""
@@ -165,6 +181,8 @@ class Roamer:
         self._rest = {}            # running resting rates: a bout is a rise above them
         self._last_escape = 0.0
         self._last_file_write = 0.0
+        self._cam_at = 0.0         # camera clock, independent of the brain's
+        self._cam_page = None      # the page the camera is pointed at
         self._chain = {"network": "mainnet", "slot": None, "at": 0.0}
         self.graph_doc = self._graph_doc()
         threading.Thread(target=self._chain_loop, daemon=True).start()
@@ -362,15 +380,45 @@ class Roamer:
             except Exception:  # noqa: BLE001
                 self._page_title = None
 
-    def step(self, page, hops_left):
-        # what the fish sees: one screenshot feeds the retina AND the site
+    # ---- the camera ---------------------------------------------------
+    def _shoot(self, page):
+        """One frame off the live page. ~35 ms; Playwright's sync API is not
+        thread-safe, so this only ever runs on the roaming thread."""
         jpg = page.screenshot(type="jpeg", quality=70)
-        img = Image.open(io.BytesIO(jpg)).convert("RGB")
+        return Image.open(io.BytesIO(jpg)).convert("RGB")
+
+    def _publish_frame(self, img):
+        small = img.resize((FRAME_W, FRAME_H), Image.BILINEAR)
+        buf = io.BytesIO()
+        small.save(buf, "JPEG", quality=60, optimize=True)
+        self.feed.publish_frame(buf.getvalue())
+        self._cam_at = time.time()
+
+    def _camera_tick(self):
+        """Called between slices of a brain step: if the camera is due, take a
+        frame. This is what makes the live panel play like video instead of
+        advancing once per thought."""
+        page = self._cam_page
+        if page is None or CAM_FPS <= 0:
+            return
+        if time.time() - self._cam_at < 1.0 / CAM_FPS:
+            return
+        try:
+            self._publish_frame(self._shoot(page))
+        except Exception:  # noqa: BLE001 — a dropped frame must not end a life
+            self._cam_at = time.time()
+
+    def step(self, page, hops_left):
+        # what the fish sees: the frame the retina samples is also a camera frame
+        self._cam_page = page
+        img = self._shoot(page)
+        self._publish_frame(img)
         out = self.retina.step(np.asarray(img))
         rates = self.retina.rates(out, motion_gain=1.5)
         for group, hz in rates.items():
             self.sim.set_drive(self.groups.get(group, []), hz)
-        detail = self.sim.run(SIM_STEPS)
+        # the brain thinks in slices so the camera can keep rolling in between
+        detail = self.sim.run(SIM_STEPS, tick=self._camera_tick, tick_every=CAM_SLICE)
         for g in ("nmlf", "vspn", "mauthner"):  # slow baselines (~8 s); a burst rides above them
             hz = detail["rates_hz"].get(g, 0.0)
             self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
@@ -454,7 +502,8 @@ class Roamer:
                      "title": self._page_title},
             "cursor": {"x": round(self._cursor[0] / VIEW_W, 4),
                        "y": round(self._cursor[1] / VIEW_H, 4)},
-            "frame": {"seq": self._seq, "w": FRAME_W, "h": FRAME_H},
+            "frame": {"seq": self.feed.frame_seq, "w": FRAME_W, "h": FRAME_H,
+                      "fps": CAM_FPS, "stream": "/frame.mjpg"},
             "retina": None,
             "brain": None,
             "decode": dec,
@@ -482,12 +531,10 @@ class Roamer:
             }
         return state
 
-    def _publish(self, detail, dec, out, img):
-        small = img.resize((FRAME_W, FRAME_H), Image.BILINEAR)
-        buf = io.BytesIO()
-        small.save(buf, "JPEG", quality=60, optimize=True)
-        # the firing bits are 23 KB at whole-brain scale: publish at most 1 Hz,
-        # and as bytes on their own route — the hero cannot show more anyway
+    def _publish(self, detail, dec, out, img=None):
+        # frames have their own clock now (see _camera_tick); this publishes the
+        # heartbeat, and the firing bits at most once a second — 23 KB at
+        # whole-brain scale, and the hero cannot show more anyway
         mask = None
         now = time.time()
         if detail is not None and now - self._mask_at >= 1.0:
@@ -495,7 +542,7 @@ class Roamer:
             self._mask_seq += 1
             self._mask_at = now
         state = self.heartbeat(detail, dec, out)
-        self.feed.publish(state, buf.getvalue(), mask)
+        self.feed.publish(state, mask)
         if time.time() - self._last_file_write >= 1.0:
             self._write_state(state)
 
@@ -576,6 +623,7 @@ def make_handler(roamer):
     origins = {o.strip() for o in
                os.environ.get("ZF_LIVE_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()}
     max_sse = int(os.environ.get("ZF_LIVE_MAX_SSE", "200"))
+    max_mjpeg = int(os.environ.get("ZF_LIVE_MAX_MJPEG", "40"))  # ~90 KB/s each
 
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -618,6 +666,8 @@ def make_handler(roamer):
                 self._send(200, roamer.graph_doc, "application/json",
                            cache="public, max-age=300",
                            extra=[("ETag", f'"{roamer.meta.get("built_at", "0")}"')])
+            elif path == "/frame.mjpg":
+                self._mjpeg()
             elif path == "/firing.bin":
                 mask, seq = feed.mask_snapshot()
                 if not mask:
@@ -642,6 +692,41 @@ def make_handler(roamer):
                 self._events()
             else:
                 self._send(404, b"not found", "text/plain")
+
+        def _mjpeg(self):
+            """The camera as a video stream: multipart/x-mixed-replace, which
+            every browser plays inside a plain <img>. One connection per viewer,
+            so it is capped the same way /events is; over the cap, the page
+            falls back to fetching /frame.jpg stills."""
+            with feed.lock:
+                busy = feed.mjpeg_clients >= max_mjpeg
+                if not busy:
+                    feed.mjpeg_clients += 1
+            if busy:
+                self._send(429, b"too many live viewers; use /frame.jpg", "text/plain",
+                           extra=[("Retry-After", "5")])
+                return
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=zfframe")
+                self.send_header("Cache-Control", "no-cache, no-store")
+                self.send_header("X-Accel-Buffering", "no")
+                self._cors()
+                self.end_headers()
+                seen = -1
+                while True:
+                    frame, seen = feed.wait_for_frame(seen, timeout=10)
+                    if not frame:
+                        continue
+                    self.wfile.write(b"--zfframe\r\nContent-Type: image/jpeg\r\n"
+                                     b"Content-Length: " + str(len(frame)).encode() +
+                                     b"\r\n\r\n" + frame + b"\r\n")
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            finally:
+                with feed.lock:
+                    feed.mjpeg_clients -= 1
 
         def _events(self):
             with feed.lock:
@@ -689,7 +774,8 @@ def serve(roamer):
     port = int(os.environ.get("ZF_ROAM_PORT", "4660"))
     server = ThreadingHTTPServer((host, port), make_handler(roamer))
     server.daemon_threads = True
-    print(f"feed on http://{host}:{port}  (/state /frame.jpg /firing.bin /events /graph /healthz)")
+    print(f"feed on http://{host}:{port}  (/state /frame.jpg /frame.mjpg /firing.bin "
+          f"/events /graph /healthz) · camera {CAM_FPS:g} fps")
     server.serve_forever()
 
 
