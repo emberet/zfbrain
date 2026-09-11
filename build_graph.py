@@ -463,6 +463,8 @@ def main():
     ap.add_argument("--smoke", action="store_true", help="build the 60-neuron toy graph")
     ap.add_argument("--synthetic", nargs="?", const=REAL_NEURONS, type=int, metavar="N",
                     help=f"build the fish-shaped synthetic brain (default {REAL_NEURONS:,}, the larva's own count)")
+    ap.add_argument("--recalibrate", action="store_true",
+                    help="drop a carried-over calibrated weight_scale and go back to the first guess")
     args = ap.parse_args()
 
     BUILD.mkdir(parents=True, exist_ok=True)
@@ -502,7 +504,14 @@ def main():
         with open(BUILD / "groups.json", "w") as f:
             json.dump({k: v for k, v in groups.items()}, f)
     # what the live site's header says about this graph — never a guess
-    with open(BUILD / "graph.meta.json", "w") as f:
+    meta_path = BUILD / "graph.meta.json"
+    prev = {}
+    if meta_path.exists():
+        try:
+            prev = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            prev = {}
+    with open(meta_path, "w") as f:
         source = "smoke" if args.smoke else ("synthetic" if args.synthetic else "fish1")
         meta = {"source": source,
                 "label": {"smoke": "smoke graph", "synthetic": "synthetic graph"}.get(source, "Fish1 slice"),
@@ -514,6 +523,24 @@ def main():
             # small graph had, spread over this graph's fan-in. calibrate.py
             # refines it until fishsim's assertions pass.
             meta["weight_scale"] = round((4.0 / 6.0) * (8.4 / max(1.0, meta["fanin"])), 6)
+        # ...but a calibrated scale outranks the guess. Rebuilding an identical
+        # graph used to silently reset it, and the guess is not a mild
+        # mis-tuning: at fan-in 208 the formula gives 0.0269, which calibrate.py
+        # documents as *below the silent threshold*. That reset ran on
+        # 2026-09-12 and left every motor pool — nMLF, vSPN, Mauthner, spinal —
+        # flat at 0 Hz while the retina kept firing, so the fish clicked but
+        # never swam. build/ is gitignored, so the only copy was the one
+        # overwritten. Carry it across when the graph is the same graph.
+        same = all(prev.get(k) == meta.get(k) for k in ("source", "neurons", "synapses", "fanin"))
+        if same and prev.get("calibrated_mean_hz") and not args.recalibrate:
+            for k in ("weight_scale", "calibrated_mean_hz", "calibrated_at"):
+                if k in prev:
+                    meta[k] = prev[k]
+            print(f"# kept calibrated weight_scale={meta['weight_scale']} "
+                  f"({prev.get('calibrated_at')}); --recalibrate to drop it")
+        elif prev.get("calibrated_mean_hz") and not same:
+            print(f"# graph changed — dropping the old calibration "
+                  f"(was {prev.get('weight_scale')}); run: python calibrate.py")
         json.dump(meta, f, indent=2)
 
     print(f"neurons      {len(ids)}")

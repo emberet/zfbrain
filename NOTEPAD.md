@@ -51,6 +51,57 @@ the Dec-2027 paper embargo; Fish-X has the retina in the volume.)
 - [ ] Fishbrain-style held-out check: a small "spiral test" proving
       percept → expected swim/escape before it ever points at the internet.
 
+## 2b · Step 08 "Whole brain" — the audit, 2026-09-12
+Everything below was checked against the repo today. Order matters: 1-3 are
+yours, 4-11 are mine and none can be *tested* before 1 exists.
+
+- [ ] **[HW] CAVE access.** `ZF_CAVE_DATASTACK` + `CAVE_AUTH_TOKEN` in `.env`.
+      `fetch_cave.py` has never once run.
+- [x] **Disk.** Was 240 MB free of 228 GB — worse than the 567 MB the
+      pre-launch note claimed. Cleared 2026-09-12 to **37 GB** (regenerable
+      caches + the 27 GB Adobe cache). The three `com.apple.os.update-*` APFS
+      snapshots would not delete: they belong to software-update staging, not
+      Time Machine, and clear when that update installs or is discarded.
+      A 39M-synapse export is 1-2 GB of parquet before anything is built.
+- [ ] **[HW] The embargo question**, still unanswered from §1. The Dec-2027
+      embargo targets *publications*, but zfbrain.online is a live public site
+      rendering the data. Read `data_policy.html` and decide what may be shown
+      before the header stops saying "synthetic graph".
+- [ ] **Format mismatch.** `fetch_cave.py` writes `data/raw/*.parquet`;
+      `build_graph.py:41,56` reads `neurons.csv` / `synapses.csv`. A 39M-row
+      synapse CSV is ~1.5 GB of text — the bridge has to be parquet-native.
+- [ ] **`fetch_cave.py` `--where` is a stub**: it sets
+      `filter_equal_dict = None` with a `# placeholder` comment, and the
+      offset/limit pagination has never been checked against caveclient 8.2.1's
+      real `query_table` signature.
+- [ ] **The 39M-row index map.** `load_edges` does `df["pre"].map(index)` with
+      a Python dict — minutes at this scale. `synthetic_graph`'s vectorised
+      `connect()` is the pattern; `np.searchsorted` over sorted root ids.
+- [ ] **Storage.** `np.savez_compressed` of 39M edges is the ~450 MB write that
+      filled the disk and crash-looped the fish on 2026-09-11. Real data cannot
+      use the 76-byte recipe trick: it needs memmapped `.npy` that `fishsim`
+      opens without materialising, plus a `.gitignore` entry.
+- [ ] **Readout groups.** `roam.py:_require_groups` hard-exits when any of
+      retina / dsgc_up,down,left,right / nmlf / vspn / mauthner / spinal is
+      empty. Z-brain registration gives regions, so most map straight across —
+      **but dsgc_up/down/left/right is a real gap: direction selectivity is
+      functional and EM does not contain it.** Either assign by arbor
+      orientation as a stated proxy, or split the pretectal population and say
+      on the site that the four directions are a convention, not a measurement.
+      This is the one place the real connectome cannot simply replace the
+      synthetic one, and it belongs in the honest list either way.
+- [ ] **Polarity.** The release assigns polarity to 21M of 39M synapses. Sign
+      the other 18M from the presynaptic cell's molecular type (vglut2a → +1,
+      gad1b → −1) per Dale's principle — `load_edges` already has the
+      mechanism. Publish the fraction inferred vs measured.
+- [ ] **Recalibrate.** `calibrate.py` re-bisects `weight_scale` on the real
+      graph. "It runs hot" may stop being true — real structure is the proposed
+      fix for it — so re-check the site copy against the new numbers.
+- [x] **The layout already works.** `roam.py:_graph_doc` projects a real EM
+      volume in microns into the site's fish frame, and `graph_ver` busts the
+      edge cache. `graph.meta.json` flips `label` from "synthetic graph" to
+      "Fish1 slice" on its own; no site change needed.
+
 ## 3 · Brain behavior
 - [x] Synaptic kernel fixed (one spike of weight w now delivers w mV, not
       ~4.5w); rates are per-neuron means; decode uses DSGC *asymmetry*, bouts
@@ -75,8 +126,21 @@ the Dec-2027 paper embargo; Fish-X has the retina in the volume.)
 - [x] Headless Chromium + Playwright confirmed; `roam.py` steps for real
       (screenshot → retina → 400 LIF steps → cursor), publishes `/state`,
       `/frame.jpg`, `/events` on 127.0.0.1:4660 (2026-09-11).
-- [ ] Allowlist edit: keep it small and public (Wikipedia family, Gutenberg,
-      Open Library, arXiv, xkcd + pump.fun, Raydium, Solscan, Solana Explorer).
+- [x] Allowlist widened 2026-09-12: **41 domains, 24 seeds** — reference and
+      museums (Met, Public Domain Review, Library of Congress, Commons,
+      Standard Ebooks, NASA, OSM), fish and brain science (ZFIN, mapzebrain,
+      bioRxiv, eLife, EOL, microns-explorer), and the coin's venues. Crypto
+      hosts are reachable but never seeds: Cloudflare + wallet prompts kill a
+      life before its first hop. `archive.org` had been a seed that was never
+      on the allowlist — every life starting there was fenced straight off it.
+- [x] **Fence down (`ZF_ROAM_OPEN=1`, 2026-09-12, user's call.)** The floor
+      under it applies either way and is not configurable off: private network
+      (localhost, 127/8, 10/8, 192.168/16, 172.16-31, 169.254, `*.local`),
+      `file:`/`chrome:`/`devtools:`/`view-source:`, and a deny-list
+      (`ZF_BLOCKLIST`) for what must not appear on a public feed. Checked on
+      the link's destination *before* the click — a page merely navigated away
+      from has already been screenshotted and published once. Domain matching
+      is a suffix compare now; `d in host` was accepting `arxiv.org.evil.com`.
 - [ ] Sanity-test the click veto against a fake "purchase" page.
 - [x] Hosting decided: this Mac runs the fish under launchd
       (`online.zfbrain.roam`), a named Cloudflare tunnel
