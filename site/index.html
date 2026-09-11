@@ -279,15 +279,32 @@ class Component extends DCLogic {
   // float32 (x, y) per neuron in the fish frame + uint16 population id.
   // Until the brain answers, the decorative silhouette is drawn the same way.
   loadLayout(n) {
-    if (this.layoutLoading) return;
+    if (this.layoutLoading || this.layoutFailed) return;
     this.layoutLoading = true;
-    fetch(this.LIVE_BASE + '/graph').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(g => fetch(this.LIVE_BASE + (g.layout || '/graph.bin')).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => ({ g, buf })))
+    const tries = this.layoutTries = (this.layoutTries || 0) + 1;
+    // a retry busts any cache in front of us: a stale layout pinned at the
+    // edge is exactly how a 7,000-neuron body ended up on a 187,053-neuron
+    // brain, and the failure was silent for three deploys
+    const bust = tries > 1 ? (u => u + (u.includes('?') ? '&' : '?') + 'r=' + Date.now()) : (u => u);
+    fetch(bust(this.LIVE_BASE + '/graph')).then(r => { if (!r.ok) throw new Error('graph ' + r.status); return r.json(); })
+      .then(g => fetch(bust(this.LIVE_BASE + (g.layout || '/graph.bin')))
+        .then(r => { if (!r.ok) throw new Error('graph.bin ' + r.status); return r.arrayBuffer(); })
+        .then(buf => ({ g, buf })))
       .then(({ g, buf }) => {
+        const want = g.layout_bytes != null ? g.layout_bytes : g.n * 10;
+        if (buf.byteLength !== want) {
+          throw new Error('layout is ' + buf.byteLength + ' bytes, expected ' + want +
+                          ' for ' + g.n + ' neurons — a stale copy in a cache somewhere');
+        }
         const n = g.n, xy = new Float32Array(buf, 0, n * 2);
         this.layout = { n, label: g.label, xy, styles: this.stylesFor(xy, n), pending: true };
+        this.layoutTries = 0;
       })
-      .catch(() => { this.layout = null; })
+      .catch(err => {
+        console.warn('[hero] could not load the brain layout:', err.message || err);
+        this.layout = null;
+        if (tries >= 3) { this.layoutFailed = true; this.forceUpdate(); }
+      })
       .finally(() => { this.layoutLoading = false; });
   }
   // style byte per point, from the same rules the silhouette uses:
@@ -506,7 +523,12 @@ class Component extends DCLogic {
       log: (f.events || []).map((e) => ({ t: hhmmss(e.t), msg: e.msg, color: brightKinds[e.kind] ? 'var(--color-bg)' : 'var(--color-accent-200)' })),
       nowT: new Date(s.now).toTimeString().slice(0, 8),
       firingLabel: live && f.brain ? f.brain.firing + ' firing · ' + n(f.brain.spikes_per_sec) + ' spikes/s · ' + f.brain.mean_membrane_mv + ' mV' : 'no run',
-      dotsCaption: live && this.layout ? n(graph.neurons) + ' neurons · every dot is one · lit = fired in the last 5 ms' : (graph.neurons ? 'loading the brain’s ' + n(graph.neurons) + ' neurons…' : 'the dots are a silhouette · the neurons light when the fish runs'),
+      dotsCaption: live && this.layout
+        ? n(graph.neurons) + ' neurons · every dot is one · lit = fired in the last 5 ms'
+        : this.layoutFailed
+          ? 'the brain’s layout would not load · the dots below are a stand-in, not its neurons'
+          : (graph.neurons ? 'loading the brain’s ' + n(graph.neurons) + ' neurons…'
+                           : 'the dots are a silhouette · the neurons light when the fish runs'),
       phaseLabel: '$ status: in training · not yet launched',
       contract: dash, copyLabel: s.copied ? 'copied' : 'copy',
       copy: () => { navigator.clipboard && navigator.clipboard.writeText(dash).catch(() => {}); this.setState({ copied: true }); setTimeout(() => this.setState({ copied: false }), 1200); },

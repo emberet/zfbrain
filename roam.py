@@ -36,6 +36,7 @@ Usage:
     python fishsim.py                            # brain without a browser
 """
 
+import hashlib
 import io
 import json
 import os
@@ -207,9 +208,17 @@ class Roamer:
             xy[:, 0] = (xy[:, 0] - lo[0]) / span[0]
             xy[:, 1] = (xy[:, 1] - lo[1]) / span[1] * 0.26 - 0.13
         self.graph_bin = xy.astype("<f4").tobytes() + gid.astype("<u2").tobytes()
+        # The layout is cached hard at the edge (a day), so its URL has to change
+        # when the graph does — otherwise a new brain is served with an old
+        # body. /frame.jpg and /firing.bin already carry a seq for this reason;
+        # this is the route that did not, and a 7,000-neuron layout stayed
+        # pinned in front of a 187,053-neuron brain until it expired.
+        self.graph_ver = hashlib.sha256(
+            f"{self.sim.n}:{self.meta.get('built_at')}".encode()).hexdigest()[:12]
         doc = {"n": int(self.sim.n), "label": self.meta["label"], "source": self.meta.get("source"),
                "built_at": self.meta.get("built_at"), "synapses": self.meta.get("synapses"),
-               "groups": names, "layout": "/graph.bin", "layout_bytes": len(self.graph_bin)}
+               "groups": names, "layout": f"/graph.bin?v={self.graph_ver}",
+               "layout_bytes": len(self.graph_bin)}
         return json.dumps(doc, separators=(",", ":")).encode()
 
     def _require_groups(self):
@@ -677,9 +686,12 @@ def make_handler(roamer):
                 self._send(200, mask, "application/octet-stream", cache=cache,
                            extra=[("ETag", f'"{seq}"')])
             elif path == "/graph.bin":
+                # only the versioned URL may be cached; a bare request could be
+                # a client holding a stale copy, so make it revalidate
+                versioned = f"v={roamer.graph_ver}" in self.path
                 self._send(200, roamer.graph_bin, "application/octet-stream",
-                           cache="public, max-age=86400",
-                           extra=[("ETag", f'"{roamer.meta.get("built_at", "0")}-bin"')])
+                           cache="public, max-age=86400" if versioned else "no-cache",
+                           extra=[("ETag", f'"{roamer.graph_ver}"')])
             elif path == "/frame.jpg":
                 _, frame, seq = feed.snapshot()
                 if not frame:
