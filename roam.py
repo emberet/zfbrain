@@ -313,7 +313,7 @@ class Roamer:
             self.stats["clicks"] += 1
             try:
                 page.wait_for_load_state("domcontentloaded", timeout=3000)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — a slow page is not a dead one
                 pass
             if page.url == before:  # dead click — try the next candidate
                 continue
@@ -350,12 +350,48 @@ class Roamer:
         seed = random.choice(others) if others else HOME_SEEDS[0]
         self._seed = seed
         self._event("escape", f"Mauthner fired · darted to {_short_url(seed)}")
-        try:
-            page.goto(seed, wait_until="domcontentloaded")
-        except Exception:  # noqa: BLE001 — a dead seed must not crash the life
-            self._seed = HOME_SEEDS[0]
-            page.goto(self._seed, wait_until="domcontentloaded")
+        self._go_seed(page, seed, "escape")
         self._page_url = None
+
+    # ---- navigation ---------------------------------------------------
+    # Playwright raises when a goto is overtaken by another navigation, and in a
+    # roaming fish that happens constantly: _look() clicks a link, the click
+    # starts a load, and an escape or the fence fires a goto into it. Every one
+    # of those was ending the life — 47 deaths in one log, all the same error,
+    # all of them on the *fallback* goto that sat outside its own try.
+    NAV_RACE = ("interrupted by another navigation", "net::ERR_ABORTED",
+                "Navigation failed because page was closed")
+
+    def _go(self, page, url, why=""):
+        """Take the page somewhere. Never raises. Two impulses arriving at once
+        is not a dead fish: if something else is already navigating, let it."""
+        for attempt in (1, 2):
+            try:
+                page.goto(url, wait_until="domcontentloaded")
+                return True
+            except Exception as exc:  # noqa: BLE001
+                msg = str(exc).splitlines()[0]
+                if any(s in msg for s in self.NAV_RACE):
+                    # the browser is already going somewhere — ride it out
+                    try:
+                        page.wait_for_load_state("domcontentloaded", timeout=5000)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    return True
+                if attempt == 1:
+                    time.sleep(0.4)     # let whatever is in flight settle, then retry
+                    continue
+                print(f"goto failed ({why or url}): {msg[:120]}", file=sys.stderr)
+                return False
+        return False
+
+    def _go_seed(self, page, seed, why=""):
+        """A seed, or the first one if that seed will not load."""
+        if self._go(page, seed, why):
+            self._seed = seed
+            return True
+        self._seed = HOME_SEEDS[0]
+        return self._go(page, self._seed, why + " fallback")
 
     # ---- one life ----------------------------------------------------
     def _new_life(self, browser):
@@ -366,14 +402,8 @@ class Roamer:
         page = ctx.new_page()
         page.set_default_timeout(15000)
         page.on("popup", lambda p: p.close())  # no popups, one page per life
-        seed = random.choice(HOME_SEEDS)
-        self._seed = seed
-        try:
-            page.goto(seed, wait_until="domcontentloaded")
-        except Exception:  # noqa: BLE001 — a dead seed must not end the life
-            seed = HOME_SEEDS[0]
-            self._seed = seed
-            page.goto(seed, wait_until="domcontentloaded")
+        self._go_seed(page, random.choice(HOME_SEEDS), "new life")
+        seed = self._seed
         self._life += 1
         self._quiet_turns = 0
         self._cursor = (VIEW_W // 2, VIEW_H // 2)
@@ -626,10 +656,10 @@ class Roamer:
                         host = urlsplit(page.url).netloc.lower()
                         if not host:  # about:blank and friends — nothing to see
                             self._event("fence", "blank page · back to seed")
-                            page.goto(self._seed, wait_until="domcontentloaded")
+                            self._go_seed(page, self._seed, "fence: blank")
                         elif not open_fence and not any(d in host for d in allow):
                             self._event("fence", f"{host} is off the allowlist · back to seed")
-                            page.goto(self._seed, wait_until="domcontentloaded")
+                            self._go_seed(page, self._seed, "fence: allowlist")
                         elif self._is_captcha_page(page):
                             self._event("fence", "captcha wall · dart away")
                             self._escape_to_fresh(page)
