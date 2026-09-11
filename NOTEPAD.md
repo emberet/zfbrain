@@ -28,61 +28,91 @@ be real, confirm what is actually usable:
 ## 2 · Build the graph  ***(build_graph.py is written; wire real data)***
 - [ ] `python fetch_cave.py` works end to end.
 - [ ] `python build_graph.py` on the real CSVs produces `build/graph.npz` +
-      `build/groups.json`; printout sanity-checked (edge counts, E/I split).
+      `build/groups.json` + `build/graph.meta.json`; printout sanity-checked
+      (edge counts, E/I split). The site header reads the meta file — the
+      moment this runs, zfbrain.online stops saying "synthetic graph".
+- [x] Until then: `build_graph.py --synthetic` — 7,000 neurons on the larva
+      silhouette (same sampler as the site's hero), all nine populations
+      wired and firing; `/graph` serves the layout so every dot is a neuron
+      (2026-09-11).
 - [ ] Wire the readout groups exactly: retina, dsgc_up/down/left/right, nmlf,
       vspn, mauthner, spinal. Missing groups = a hard error in roam.py.
 - [ ] Fishbrain-style held-out check: a small "spiral test" proving
       percept → expected swim/escape before it ever points at the internet.
 
 ## 3 · Brain behavior
-- [ ] Tune LIF constants / EPSP scale so the smoke test behaviors are sane
-      (see `python fishsim.py`).
-- [ ] Validate DSGC direction selectivity: injection on one side must steer
-      that way, and the startle path must fire the Mauthner escape.
+- [x] Synaptic kernel fixed (one spike of weight w now delivers w mV, not
+      ~4.5w); rates are per-neuron means; decode uses DSGC *asymmetry*, bouts
+      and turns are rises above a running baseline, escape is a Mauthner burst
+      (> ZF_ESCAPE_HZ) with corollary discharge after the fish's own bout.
+      `python fishsim.py` asserts: all populations > 0 Hz, none saturated,
+      still page = no bout/turn/escape, rightward drive steers right, a flash
+      lifts Mauthner ≥ 5×.
+- [ ] Re-run the same checks on the Fish1 graph when it exists; the synthetic
+      weights are hand-tuned (`SYN` in build_graph.py) and will not carry over.
 - [ ] Storyboard the 3 site behaviors on a webpage: optic-flow scroll, nMLF
       bout bursts, Mauthner dart-away. Tune thresholds.
 
 ## 4 · Internet creature
-- [ ] Confirm headless Chromium + Playwright on your machine (the fly's stack).
-- [ ] Allowlist edit: choose the link-rich domains the fish roams. Keep it
-      small and public (Wikipedia family, Gutenberg, Open Library, arXiv,
-      xkcd + the launchpad + blockscout + own coin page).
+- [x] Headless Chromium + Playwright confirmed; `roam.py` steps for real
+      (screenshot → retina → 400 LIF steps → cursor), publishes `/state`,
+      `/frame.jpg`, `/events` on 127.0.0.1:4660 (2026-09-11).
+- [ ] Allowlist edit: keep it small and public (Wikipedia family, Gutenberg,
+      Open Library, arXiv, xkcd + pump.fun, Raydium, Solscan, Solana Explorer).
 - [ ] Sanity-test the click veto against a fake "purchase" page.
-- [ ] Decide hosting: single container like the fly; tunnel to the site
-      (cloudflared quick tunnel; publish `site/web/live.json`).
+- [x] Hosting decided: this Mac runs the fish under launchd
+      (`online.zfbrain.roam`), a named Cloudflare tunnel
+      (`online.zfbrain.tunnel`) publishes it as `live.zfbrain.online`.
+- [x] Tunnel `zfbrain-live` (5491648f…) created in the dashboard, public
+      hostname `live.zfbrain.online → http://127.0.0.1:4660`, token in
+      `.env` as `ZF_TUNNEL_TOKEN`, `online.zfbrain.tunnel` agent loaded — the
+      feed is public (2026-09-11 19:46).
+- [ ] **[HW]** Keep the Mac awake (`sudo pmset -c sleep 0` or Energy Saver).
 
 ## 5 · Memecoin half — the launch **[HW, money]**
-- [ ] Verify pons launchpad selectors on the LIVE site (they drift; rhlive.py
-      selectors are best-effort). Update `rhlive.py` accordingly.
-- [ ] `python rhwallet.py new`, fund ~0.002 ETH on Robinhood Chain.
-- [ ] `python rhdryrun.py` must print MATCHES + personal_sign ok, spending
-      nothing.
-- [ ] Choose ticket/name/description. Default scaffold is **ZFBRAIN /
-      "Zebrafish Connectome"**. Set `ZF_RH_X` to a handle YOU own (the fly repo
-      warns the same: using someone else's handle is impersonation).
-- [ ] Dry-run once against the launchpad with a test token; keep it off the
-      real name. Check the on-screen log labels "by fish / by rig".
-- [ ] Live launch. Wait for the receipt **on camera** (rhlive does this).
-      Read the receipt on blockscout yourself. Then set the contract address
-      in `site/index.html` + live.json.
+- [x] `python solkeygen.py --env` → wallet in `.env`; funded 0.05 SOL.
+- [x] `python soldryrun.py --send-sim` runs on devnet (faucet is flaky; a 0
+      balance makes the sim say AccountNotFound — that is the honest result).
+- [x] `python sollive.py --sim` signs a real 0-lamport self-transfer and
+      simulates it on mainnet: OK, nothing broadcast; `--send` refuses
+      without `ZF_SOL_LIVE=1`.
+- [ ] The real create: `sollive.py` still signs only a probe. Build the actual
+      pump.fun create instruction (Token-2022, transfer-fee `ZF_SOL_TAX` bps)
+      and simulate it before anything else.
+- [ ] Choose ticker/name/description. Default scaffold is **ZFBRAIN /
+      "Zebrafish Connectome"**. Use a handle YOU own.
+- [ ] Dry-run once with a test token; keep it off the real name. Check the
+      on-screen log labels "by fish / by rig".
+- [ ] Live launch. Wait for the receipt **on camera**. Read it on Solscan
+      yourself. Then set the contract address in `site/index.html`
+      (`contract` in renderVals) and in the heartbeat.
 - [ ] Update the README "what is not real" for whatever the fish actually
       didn't do itself — that list is the whole point, don't soften it.
-- [ ] Token bootstrapping is the creator's call. Decide pair (GOOGL default),
-      tax (1%), supply 1,000,000,000 fixed at launch — mirror the fly.
+- [ ] Token bootstrapping is the creator's call. Pair, tax (1%), supply
+      1,000,000,000 fixed at launch — mirror the fly.
 
 ## 6 · Voice
-- [ ] Wire a real LLM key (`LLM_API_KEY`) and model for voice.py.
+- [ ] **[HW]** `ANTHROPIC_API_KEY` in `.env` (voice.py uses the Anthropic SDK;
+      `ZF_VOICE_MODEL` defaults to claude-sonnet-5). Without it `--dry` prints
+      "no credentials" and stops.
 - [ ] Wire a posting endpoint (`POST_URL`) — X via a relay/tool of your choice.
       Posting is unsafe-empty by design: without POST_URL it just prints.
 - [ ] Optionally: if you want the posts written in *your* voice (the @emberetme
-      persona), hand that persona prompt to the draft system in voice.py.
+      persona), hand that persona prompt to `SYSTEM` in voice.py.
 - [ ] Watch for a session where a draft gets rejected — that means the number
       check is working; log one as proof in the repo.
 
 ## 7 · Site
-- [ ] Deploy `site/` (Vercel / Netlify — pure static).
-- [ ] Wire the live feed: either a published websocket from the roamer or the
-      `site/web/live.json` file written by heartbeat (already implemented).
+- [x] Deployed: Cloudflare Pages project `zfbrain`, custom domains
+      `zfbrain.online` + `www` (2026-09-11). `zfsite.py --deploy` republishes
+      (gated by `ZF_SITE_LIVE=1`; wrangler runs with an empty env file so the
+      seed can never ride along).
+- [x] `site/` is plain source now (`tools/unbundle.py` unpacked the design
+      canvas once). Live panel subscribes to `live.zfbrain.online/events`,
+      shows the real frame, retina grid toggle, real events; header counts
+      the running graph; asleep state when nothing answers.
+- [x] Live panel is public: zfbrain.online subscribes to
+      live.zfbrain.online/events and shows the fish's frame (2026-09-11).
 - [ ] Add the $ZFBRAIN contract + explorer link once launched.
 - [ ] Keep the honest list green. Every "what is not real" claim must stay true.
 
@@ -95,6 +125,8 @@ be real, confirm what is actually usable:
       by side. Cheap if a fly node can run.
 - [ ] Real reward circuit (the fish's analogue of the fly's mushroom body) —
       only after a real one exists; inventing one is out of scope.
+- [ ] Viewers beyond ~200 concurrent SSE connections get 429 and fall back to
+      polling; if launch day is bigger than that, front the feed with a Worker.
 
 ## Key references (all read for this build)
 - Fish1 release page + paper (release paper, bioRxiv 2025 / published 2026)
@@ -112,3 +144,7 @@ be real, confirm what is actually usable:
 - [x] Fresh repo, mimic flycoinrh patterns rather than forking it.
 - [x] Memecoin half included from day one, launch paced like the fly's:
       wallet → dryrun → test launch → the real one.
+- [x] Solana / pump.fun, not Robinhood Chain (2026-09).
+- [x] Live feed = named Cloudflare tunnel from the fish's own machine, not a
+      store-and-forward Worker: real-time, no write caps, honest "asleep" when
+      the machine is off (2026-09-11).

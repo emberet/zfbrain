@@ -1,32 +1,43 @@
 """Thin Solana RPC client.
 
-SOL_RPC_URL (default: devnet if ZF_SOL_DEVNET=1 else mainnet-beta), plus
-SOL_RPC_API_KEY appended as the `api-key` header when set.
+The URL is resolved PER CALL from the environment, never at import time:
+  SOL_RPC_URL           explicit override
+  ZF_SOL_DEVNET=1       -> https://api.devnet.solana.com
+  otherwise             -> https://api.mainnet-beta.solana.com
+so soldryrun.py can force devnet before its first request even though it
+imports this module at the top of the file. SOL_RPC_API_KEY, when set, goes
+out as the `api-key` header.
 
-Every call here is honest read-only except send_raw_transaction / simulate
-which are only reached by soldryrun.py (devnet, free) or sollive.py
-(ZF_SOL_LIVE=1). Fees are SOL in lamports; a Token-2022 transfer-fee is a
-protocol-level % on each transfer, configured at mint time, the honest analog
-of the fly's tax.
+Every call here is read-only except send_raw / simulate, which are only
+reached by soldryrun.py (devnet, free) or sollive.py (ZF_SOL_LIVE=1). Fees
+are SOL in lamports; a Token-2022 transfer-fee is a protocol-level % on each
+transfer, configured at mint time, the honest analog of the fly's tax.
 """
 
 import os
 
 import requests
 
-RPC = os.environ.get(
-    "SOL_RPC_URL",
-    "https://api.devnet.solana.com" if os.environ.get("ZF_SOL_DEVNET") == "1"
-    else "https://api.mainnet-beta.solana.com",
-)
-API_KEY = os.environ.get("SOL_RPC_API_KEY")
+MAINNET = "https://api.mainnet-beta.solana.com"
+DEVNET = "https://api.devnet.solana.com"
 
 
-def _call(method, params=None, timeout=20):
+def rpc_url():
+    if os.environ.get("SOL_RPC_URL"):
+        return os.environ["SOL_RPC_URL"]
+    return DEVNET if os.environ.get("ZF_SOL_DEVNET") == "1" else MAINNET
+
+
+def network():
+    return "devnet" if rpc_url() == DEVNET else "mainnet"
+
+
+def _call(method, params=None, timeout=20, url=None):
     headers = {"content-type": "application/json"}
-    if API_KEY:
-        headers["api-key"] = API_KEY
-    r = requests.post(RPC, headers=headers,
+    api_key = os.environ.get("SOL_RPC_API_KEY")
+    if api_key:
+        headers["api-key"] = api_key
+    r = requests.post(url or rpc_url(), headers=headers,
                       json={"jsonrpc": "2.0", "id": 1, "method": method,
                             "params": params or []}, timeout=timeout)
     r.raise_for_status()
@@ -40,8 +51,10 @@ def latest_blockhash():
     return _call("getLatestBlockhash")["value"]["blockhash"]
 
 
-def recent_whitelisted():
-    return _call("getTokenLargestAccounts")
+def get_slot(url=None):
+    """Current slot — the one live chain number the site header shows."""
+    return int(_call("getSlot", [{"commitment": "confirmed"}], timeout=8, url=url))
+
 
 # -- read-only ledger facts -----------------------------------------------
 def get_balance(pubkey_b58):
@@ -55,23 +68,27 @@ def get_token_largest(pubkey_b58):
 
 
 def airdrop(pubkey_b58, lamports):
-    """requestAirdrop — devnet/devnet-faucet ONLY free air. This is the one
-    method that can ADD lamports to a wallet, and it is honest the way the
-    fly's self-rescued hero was: it can only ever be reached by soldryrun
-    (devnet) which REQUIRES ZF_SOL_DEVNET=1, or by the free faucet directly.
-    There is no mainnet 'air'; mainnet SOL arrives by human funding the
+    """requestAirdrop — devnet faucet ONLY, free air. This is the one method
+    that can ADD lamports to a wallet and it only ever works on devnet; on
+    mainnet the RPC rejects it. Mainnet SOL arrives by a human funding the
     address (NOTEPAD step), never by this function."""
     return _call("requestAirdrop", [pubkey_b58, lamports])
 
 
-def simulate(raw_b58, sigs=None):
-    """simulateTransaction: shows the outcome without committing anything."""
+def simulate(raw_b58):
+    """simulateTransaction: shows the outcome without committing anything.
+    Returns the raw JSON result: {"context": {...}, "value": {"err": ..., ...}}."""
     return _call("simulateTransaction",
                  [raw_b58, {"encoding": "base58",
                             "replaceRecentBlockhash": True}])
 
 
+def sim_err(sim):
+    """The error (or None) out of a simulate() result."""
+    return (sim or {}).get("value", {}).get("err")
+
+
 def send_raw(raw_b58):
-    """Only ever reached by sollive.py after ZF_SOL_LIVE=1."""
+    """Only ever reached by sollive.py after ZF_SOL_LIVE=1. Takes base58."""
     return _call("sendTransaction", [raw_b58, {"encoding": "base58",
                                                "skipPreflight": True}])

@@ -16,13 +16,17 @@ Output:
   build/groups.json {group: [neuron index, ...]}
 
 Usage:
-  python build_graph.py          # real data
-  python build_graph.py --smoke  # tiny synthetic graph for developing the sim
+  python build_graph.py               # real data
+  python build_graph.py --smoke       # 60-neuron toy graph for the unit test
+  python build_graph.py --synthetic   # 7,000-neuron fish-shaped synthetic brain,
+                                      # every population wired (the stand-in
+                                      # until Fish1's proofread export lands)
 """
 
 import argparse
 import json
-import os
+import math
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -117,14 +121,191 @@ def smoke_graph(seed=7):
     return ids, coords, types, pre, post, w, groups
 
 
+# ---------------------------------------------------------------------------
+# synthetic fish-shaped brain — the honest stand-in until Fish1 is exported
+# ---------------------------------------------------------------------------
+def _profile(x):
+    """Larva lateral profile, head left: x 0..1 along the fish, y up-negative.
+    Same function the site's hero canvas uses, so neuron = dot."""
+    u = min(1.0, x / 0.8)
+    s = math.sin(math.pi * u ** 0.72) ** 0.75
+    return (-(0.012 + 0.092 * s) * (1 - 0.5 * u * u),
+            (0.012 + 0.108 * s) * (1 - 0.6 * u * u))
+
+
+def _in_fish(x, y):
+    """0 outside, 1 body, 2 fin, 3 caudal fin — ported 1:1 from the page."""
+    if x < 0 or x > 1:
+        return 0
+    if x <= 0.8:
+        top, bottom = _profile(x)
+        if top <= y <= bottom:
+            return 1
+        if 0.50 < x < 0.66 and y < top and y > top - 0.07 * math.sin((x - 0.50) / 0.16 * math.pi) ** 0.5 * ((x - 0.50) / 0.05 if x < 0.55 else 1):
+            return 2  # dorsal fin
+        if 0.60 < x < 0.78 and y > bottom and y < bottom + 0.055 * math.sin((x - 0.60) / 0.18 * math.pi) ** 0.6:
+            return 2  # anal fin
+        if 0.20 < x < 0.34 and y > bottom * 0.55 and y < bottom * 0.55 + 0.05 * (1 - abs((x - 0.27) / 0.07)):
+            return 2  # pectoral fin
+        if 0.40 < x < 0.48 and y > bottom and y < bottom + 0.028 * (1 - abs((x - 0.44) / 0.04)):
+            return 2  # pelvic fin
+        return 0
+    v = (x - 0.8) / 0.2
+    half = 0.03 + 0.085 * v ** 0.8
+    notch = (v - 0.55) / 0.45 * 0.055 if v > 0.55 else 0.0
+    return 3 if notch <= abs(y) <= half else 0
+
+
+def fish_points(n=7000, seed=23):
+    """The page's dot sampler (same LCG, same rules): n points inside the larva."""
+    s = seed
+
+    def rnd():
+        nonlocal s
+        s = (s * 16807) % 2147483647
+        return s / 2147483647
+
+    pts = []
+    while len(pts) < n:
+        x = rnd()
+        y = (rnd() - 0.5) * 0.36
+        kind = _in_fish(x, y)
+        if not kind:
+            continue
+        if math.hypot(x - 0.105, y + 0.02) < 0.017:
+            continue  # pupil: empty
+        if kind == 2 and rnd() < 0.55:
+            continue  # fins are sparse
+        rnd()  # the page draws a phase value here; keep the sequence identical
+        pts.append((x, y, kind))
+    return pts
+
+
+# synapse counts per connection; FishSim maps count 6 -> EPSP mV, count 1 -> EPSP/6
+SYN = {
+    "retina->dsgc":   dict(k=10, count=5, p_exc=0.72),
+    "dsgc->nmlf":     dict(k=8,  count=4),
+    "dsgc->vspn":     dict(k=8,  count=4),
+    "dsgc->other":    dict(k=6,  count=4),
+    "other->other":   dict(k=5,  count=3),
+    "other->nmlf":    dict(k=3,  count=2),
+    "vspn->other":    dict(k=2,  count=2),
+    "dsgc->mauthner": dict(k=60, count=1),   # tuned: ~8 Hz at rest, ~180 Hz on a whole-field flash
+    "nmlf->mauthner": dict(k=20, count=1),   # tuned: ~8 Hz at rest, ~260 Hz on a flash
+    "nmlf->spinal":   dict(k=3,  count=4),
+    "vspn->spinal":   dict(k=2,  count=4),
+    "mauthner->spinal": dict(k=500, count=6),
+    "spinal->spinal": dict(k=3,  count=3),
+}
+SIZES = dict(retina=1800, dsgc=1000, nmlf=350, vspn=350, mauthner=2, other=1400)  # spinal = the rest
+GABA_FRACTION_OTHER = 0.30
+
+
+def synthetic_graph(n=7000, seed=7):
+    """A fish-shaped, fully wired synthetic connectome. Populations are laid
+    out head->tail by rank on x (retina in the eye, DSGCs in the tectum, nMLF /
+    vSPN / the Mauthner pair / an integrator pool in the hindbrain, spinal cord
+    down the body and tail). Every dot on the site is one of these neurons."""
+    rng = np.random.default_rng(seed)
+    pts = fish_points(n)
+    coords = np.array([(x, y, 0.0) for x, y, _ in pts], np.float32)
+    order = np.argsort(coords[:, 0], kind="stable")     # head -> tail
+
+    groups = {}
+    i = 0
+    for name in ("retina", "dsgc", "nmlf", "vspn", "mauthner", "other"):
+        groups[name] = order[i:i + SIZES[name]]
+        i += SIZES[name]
+    groups["spinal"] = order[i:]
+
+    # retina: index order (y, x) so the 12x18 retina grid resamples onto it retinotopically
+    r = groups["retina"]
+    groups["retina"] = r[np.lexsort((coords[r, 0], coords[r, 1]))]
+    # DSGC directions by quadrant around the tectum centroid
+    d = groups["dsgc"]
+    cx, cy = coords[d, 0].mean(), coords[d, 1].mean()
+    up, dn = coords[d, 1] < cy, coords[d, 1] >= cy
+    lf, rt = coords[d, 0] < cx, coords[d, 0] >= cx
+    groups["dsgc_up"], groups["dsgc_down"] = d[up & lf], d[dn & lf]
+    groups["dsgc_left"], groups["dsgc_right"] = d[up & rt], d[dn & rt]
+    del groups["dsgc"]
+    # the Mauthner pair sits on the midline, one per side
+    m = groups["mauthner"]
+    groups["mauthner"] = m[np.argsort(coords[m, 1])][[0, -1]] if len(m) > 1 else m
+
+    types = np.array(["glu"] * n, dtype=object)
+    other = groups["other"]
+    gaba = rng.random(len(other)) < GABA_FRACTION_OTHER
+    types[other[gaba]] = "gaba"
+    types[groups["retina"]] = "glu"
+
+    pre, post, w = [], [], []
+
+    def connect(src, dst, k, count, sign=None, p_exc=None):
+        """Every dst neuron gets k random src inputs."""
+        src = np.asarray(src)
+        if len(src) == 0 or len(dst) == 0:
+            return
+        picks = rng.choice(src, size=(len(dst), min(k, len(src))), replace=True)
+        for j, dj in enumerate(dst):
+            for sj in picks[j]:
+                if sign is not None:
+                    sg = sign
+                elif p_exc is not None:
+                    sg = 1.0 if rng.random() < p_exc else -1.0
+                else:
+                    sg = -1.0 if types[sj] == "gaba" else 1.0
+                pre.append(sj); post.append(dj); w.append(count * sg)
+
+    dsgc = np.concatenate([groups[g] for g in ("dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right")])
+    c = SYN
+    connect(groups["retina"], dsgc, c["retina->dsgc"]["k"], c["retina->dsgc"]["count"], p_exc=c["retina->dsgc"]["p_exc"])
+    connect(np.concatenate([groups["dsgc_up"], groups["dsgc_down"]]), groups["nmlf"], **c["dsgc->nmlf"], sign=1.0)
+    connect(np.concatenate([groups["dsgc_left"], groups["dsgc_right"]]), groups["vspn"], **c["dsgc->vspn"], sign=1.0)
+    connect(dsgc, other, **c["dsgc->other"], sign=1.0)
+    connect(other, other, **c["other->other"])                      # sign from the pre cell's type
+    connect(other[~gaba], groups["nmlf"], **c["other->nmlf"], sign=1.0)
+    connect(groups["vspn"], other, **c["vspn->other"], sign=-1.0)
+    connect(dsgc, groups["mauthner"], **c["dsgc->mauthner"], sign=1.0)
+    connect(groups["nmlf"], groups["mauthner"], **c["nmlf->mauthner"], sign=-1.0)
+    connect(groups["nmlf"], groups["spinal"], **c["nmlf->spinal"], sign=1.0)
+    # vSPN -> spinal: excites its own side, inhibits the other (the turn)
+    sp = groups["spinal"]
+    picks = rng.choice(groups["vspn"], size=(len(sp), c["vspn->spinal"]["k"]))
+    for j, dj in enumerate(sp):
+        for sj in picks[j]:
+            same = (coords[sj, 1] < 0) == (coords[dj, 1] < 0)
+            pre.append(sj); post.append(dj); w.append(c["vspn->spinal"]["count"] * (1.0 if same else -1.0))
+    # Mauthner -> contralateral spinal, strong: the C-start
+    for mj in groups["mauthner"]:
+        contra = sp[(coords[sp, 1] < 0) != (coords[mj, 1] < 0)]
+        for dj in rng.choice(contra, size=min(c["mauthner->spinal"]["k"], len(contra)), replace=False):
+            pre.append(mj); post.append(dj); w.append(float(c["mauthner->spinal"]["count"]))
+    # spinal chain head -> tail: the bout travels down the cord
+    sp_sorted = sp[np.argsort(coords[sp, 0])]
+    for j in range(len(sp_sorted) - 1):
+        for step in range(1, c["spinal->spinal"]["k"] + 1):
+            if j + step < len(sp_sorted):
+                pre.append(sp_sorted[j]); post.append(sp_sorted[j + step]); w.append(float(c["spinal->spinal"]["count"]))
+
+    ids = np.arange(n, dtype=np.int64) + 200000
+    groups = {k: [int(v) for v in vals] for k, vals in groups.items()}
+    return (ids, coords, types.astype(str), np.array(pre, np.int32), np.array(post, np.int32),
+            np.array(w, np.float32), groups)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--smoke", action="store_true", help="build a tiny synthetic graph")
+    ap.add_argument("--smoke", action="store_true", help="build the 60-neuron toy graph")
+    ap.add_argument("--synthetic", nargs="?", const=7000, type=int, metavar="N",
+                    help="build the fish-shaped synthetic brain (default 7000 neurons)")
     args = ap.parse_args()
 
     BUILD.mkdir(parents=True, exist_ok=True)
     if args.smoke:
         ids, coords, types, pre, post, w, groups = smoke_graph()
+    elif args.synthetic:
+        ids, coords, types, pre, post, w, groups = synthetic_graph(args.synthetic)
     else:
         ids, coords, types, index = load_neurons()
         types_by_id = {rid: t for rid, t in zip(ids, types)}
@@ -142,6 +323,14 @@ def main():
     )
     with open(BUILD / "groups.json", "w") as f:
         json.dump({k: v for k, v in groups.items()}, f)
+    # what the live site's header says about this graph — never a guess
+    with open(BUILD / "graph.meta.json", "w") as f:
+        source = "smoke" if args.smoke else ("synthetic" if args.synthetic else "fish1")
+        json.dump({"source": source,
+                   "label": {"smoke": "smoke graph", "synthetic": "synthetic graph"}.get(source, "Fish1 slice"),
+                   "neurons": int(len(ids)), "synapses": int(len(pre)),
+                   "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds")},
+                  f, indent=2)
 
     print(f"neurons      {len(ids)}")
     print(f"edges (signed){len(pre)}")

@@ -1,12 +1,12 @@
-"""Devnet full dry-run — the same honest rig as sollive, but air is FREE.
+"""Devnet full dry-run — the same rig as sollive, but the air is FREE.
 
 Every money rule is identical to sollive; the ONLY differences:
 
-  * network: devnet (air given free by the chain itself, no human funding —
-    the honest counter to "fund ~0.01 SOL to launch", the analog of fetching
-    your own scarf vs having someone else buy it)
-  * nothing may EVER self-broadcast: --send here only re-simulates deeper,
-    it never reaches sollive's broadcast path for one lamport
+  * network: devnet, forced before the first RPC call (ZF_SOL_DEVNET=1,
+    ZF_SOL_LIVE stripped) — this file cannot be pointed at mainnet
+  * the keypair lives ONLY in RAM — a throwaway, never written to .env,
+    never echoed; devnet air belongs to nobody
+  * nothing may EVER broadcast: --send-sim only simulates deeper
 
 python soldryrun.py             # sim-only, nothing broadcast (free)
 python soldryrun.py --send-sim  # deeper devnet sim, still nothing broadcast
@@ -17,24 +17,24 @@ import json
 import os
 import sys
 
-import sollive  # honest: we ARE sollive, minus the mainnet gate
-import solrpc
+# devnet, before anything talks to an RPC
+os.environ["ZF_SOL_DEVNET"] = "1"
+os.environ.pop("ZF_SOL_LIVE", None)
+os.environ.pop("SOL_RPC_URL", None)
 
-from solders.keypair import Keypair  # the census called it: used at line 51, imported NOW
+from solders.keypair import Keypair  # noqa: E402
 
-
-def _ensure_devnet():
-    os.environ.setdefault("ZF_SOL_DEVNET", "1")
-    os.environ.pop("ZF_SOL_LIVE", None)  # dry-run may never be live
+import sollive  # noqa: E402
+import solrpc  # noqa: E402
 
 
 def _airdrop_free(pub):
-    """Devnet airdrop: the chain gives air freely. No human funding, like the
-    fly's Robinhood air but WITHOUT the human-funded step."""
+    """Devnet faucet: the chain gives air freely. Often rate-limited; that is
+    an honest 'skipped', not a failure of the rig."""
     try:
-        solrpc._call("requestAirdrop", [pub, 1_000_000_000])
+        solrpc.airdrop(pub, 1_000_000_000)
     except Exception as e:  # noqa: BLE001
-        print(f"airdrop    : skipped ({e}) — devnet may not need it (free rig)")
+        print(f"airdrop   : skipped ({e})")
 
 
 def main():
@@ -43,19 +43,12 @@ def main():
                     help="deeper devnet sim, still nothing broadcast")
     args = ap.parse_args()
 
-    _ensure_devnet()
+    assert solrpc.network() == "devnet", "dry-run must be on devnet"
+    print(f"network   : {solrpc.network()}")
 
-    if os.environ.get("ZF_SOL_DEVNET") == "1":
-        # HONESTER still than sollive.wallet(): a throwaway devnet keypair
-        # that lives ONLY in RAM — never persisted .env, never echoed. Devnet
-        # air belongs to nobody; the fly's identity here is disposable, so
-        # nothing about it can be spent, reused, or pointed at mainnet.live.
-        kp = Keypair()
-        pub = str(kp.pubkey())
-    else:
-        kp = sollive.wallet()
-        pub = str(kp.pubkey())
-    print(f"wallet    : {pub}")
+    kp = Keypair()  # RAM only
+    pub = str(kp.pubkey())
+    print(f"wallet    : {pub} (throwaway, RAM only)")
 
     bal = solrpc.get_balance(pub)
     print(f"balance   : {bal / 1e9:.4f} SOL")
@@ -65,19 +58,20 @@ def main():
         bal = solrpc.get_balance(pub)
         print(f"balance   : {bal / 1e9:.4f} SOL (after free air)")
 
-    if args.send_sim:
-        bh = solrpc.latest_blockhash()
-        tx = sollive._launch_probe(kp, pub, bh)
-        sim = sollive._simulate_launch(tx)
-        err = sim.value.err if sim.value and sim.value.err else None
-        print(f"simulate  : {'OK (no error, nothing broadcast)' if not err else err}")
-        with open("build/dryrun.json", "w") as f:
-            json.dump({"wallet": pub, "blockhash": bh, "sim_err": err,
-                       "sent": False}, f, indent=2)
-        print("# honest: simulateTransaction on devnet, spent 0, broadcast 0")
-        sys.exit(0 if not err else 1)
+    if not args.send_sim:
+        print("# --send-sim to go deeper; nothing here ever broadcasts")
+        return
 
-    print("# --send-sim to go deeper; nothing here ever broadcasts on devnet")
+    bh = solrpc.latest_blockhash()
+    tx = sollive.launch_probe(kp, bh)
+    err = solrpc.sim_err(sollive.simulate(tx))
+    print(f"simulate  : {'OK (no error, nothing broadcast)' if not err else err}")
+    os.makedirs("build", exist_ok=True)
+    with open("build/dryrun.json", "w") as f:
+        json.dump({"network": "devnet", "wallet": pub, "blockhash": bh,
+                   "sim_err": err, "sent": False}, f, indent=2)
+    print("# honest: simulateTransaction on devnet, spent 0, broadcast 0")
+    sys.exit(0 if not err else 1)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,30 @@
+body { margin:0; background:oklch(0.07 0.03 258); color:var(--color-bg); font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace; text-wrap:pretty; }
+    a { color:var(--color-accent-300); } a:hover { color:var(--color-bg); }
+    @keyframes zf-pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+    body::after { content:""; position:fixed; inset:0; pointer-events:none; z-index:50; background:repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0,0,0,.18) 2px 3px); }
+    ::selection { background:var(--color-accent-300); color:oklch(0.07 0.03 258); }
+    @keyframes zf-blink { 0%,49% { opacity:1; } 50%,100% { opacity:0; } }
+
+/* ---- phones (≤640px): the design was drawn at 1440; these are the overrides.
+   Inline styles win over a stylesheet, hence the !important. ---- */
+@media (max-width: 640px) {
+  [data-zf="header"] { grid-template-columns: 1fr 1fr !important; }
+  [data-zf="header"] > div { padding: 10px 14px !important; line-height: 17px !important; font-size: 11px; }
+  [data-zf="header"] > div:nth-child(2) { border-right: 0 !important; }
+  [data-zf="header"] > div:nth-child(n+3) { border-top: 1px solid color-mix(in srgb, var(--color-bg) 22%, transparent); border-right: 0 !important; }
+  [data-zf="header-graph"], [data-zf="header-status"] { grid-column: 1 / -1 !important; }
+  [data-zf="contract"] { font-size: 16px !important; }
+  [data-zf="live-grid"] { gap: 16px !important; margin-top: 20px !important; }
+  [data-zf="view-toggle"] { padding: 6px 12px !important; }
+  /* width:1% + nowrap = shrink the label column to its text so the bar / value gets the rest */
+  [data-zf="beh-name"], [data-zf="life-name"] { white-space: nowrap; font-size: 13px !important; width: 1% !important; padding-right: 14px !important; }
+  [data-zf="life-val"] { font-size: 18px !important; }
+  [data-zf="life-url"] { font-size: 12px !important; line-height: 16px; padding-top: 11px !important; }
+  [data-zf="plan-row"] { grid-template-columns: 34px minmax(0,1fr) auto !important; gap: 6px 12px !important; padding: 14px 0 !important; align-items: start !important; }
+  [data-zf="plan-n"] { font-size: 18px !important; line-height: 24px; }
+  [data-zf="plan-title"] { display: block; font-size: 19px !important; line-height: 24px !important; }
+  [data-zf="plan-body"] { display: block; margin: 4px 0 0 !important; font-size: 13px !important; line-height: 19px !important; }
+  [data-zf="chain-k"] { width: 34% !important; font-size: 13px !important; }
+  [data-zf="chain-v"] { font-size: 15px !important; }
+  section, footer { padding-left: 16px !important; padding-right: 16px !important; }
+}

@@ -23,11 +23,12 @@ import numpy as np
 
 
 class Retina:
-    def __init__(self, rows=12, cols=18, gain=60.0, flow_shift=3):
+    def __init__(self, rows=12, cols=18, gain=100.0, flow_shift=3, motion_max=80.0):
         self.rows = rows
         self.cols = cols
         self.gain = gain
         self.shift = flow_shift
+        self.motion_max = motion_max  # Hz cap on a DSGC channel: a scroll is not a flash
         # lower-posterior bias: OMR weights the lower posterior field hardest
         yy, xx = np.mgrid[0:rows, 0:cols]
         lower = (yy + 0.5) / rows                       # 0 top -> 1 bottom
@@ -82,7 +83,7 @@ class Retina:
         """Flattened per-channel Hz ready for set_drive() on 'retina'/'dsgc_*'."""
         lum = (out["luminance"].reshape(-1) * self.gain).astype(np.float64)
         motion = {
-            k: (g.reshape(-1) * self.gain * motion_gain).astype(np.float64)
+            k: np.clip(g.reshape(-1) * self.gain * motion_gain, 0.0, self.motion_max).astype(np.float64)
             for k, g in out["motion"].items()
         }
         return {"retina": lum, "dsgc_up": motion["up"], "dsgc_down": motion["down"],

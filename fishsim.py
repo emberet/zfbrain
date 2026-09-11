@@ -20,7 +20,9 @@ Usage:
 """
 
 import argparse
+import base64
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -31,14 +33,24 @@ TAU = 0.020
 TAU_SYN = 0.002
 TAU_REF = 0.002
 DT = 0.0005
-EPSP = 4.0  # mV delivered to a post target when a pre neuron spikes
+EPSP = 4.0  # mV delivered to a post target by one spike over the strongest synapse (count 6)
+FLASH_STEPS = 10  # "fired this step" on the site = spiked within the last 5 ms
+ESCAPE_HZ = float(os.environ.get("ZF_ESCAPE_HZ", "30"))  # Mauthner rate that counts as a startle
+NMLF_REST, NMLF_SPAN = 30.0, 40.0   # a bout = nMLF this far above its resting rate
+VSPN_REST, VSPN_SPAN = 30.0, 30.0   # a turn = vSPN this far above its resting rate
 
 
 def load_graph(graph_path, groups_path):
     npz = np.load(graph_path)
     groups_path = Path(groups_path)
     groups = json.loads(groups_path.read_text()) if groups_path.exists() else {}
+    meta_path = Path(graph_path).with_name("graph.meta.json")
+    meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    meta.setdefault("label", "unknown graph")
+    meta.setdefault("neurons", int(len(npz["coords"])))
+    meta.setdefault("synapses", int(len(npz["pre"])))
     return {
+        "meta": meta,
         "root_ids": npz["root_ids"],
         "coords": npz["coords"],
         "types": npz["types"],
@@ -71,6 +83,8 @@ class FishSim:
         self.isyn = np.zeros(self.n, dtype=np.float64)
         self.refract = np.zeros(self.n, dtype=np.float64)
         self.spike_counts = np.zeros(self.n, dtype=np.int64)
+        self.last_spike = np.full(self.n, -10**9, dtype=np.int64)  # step index of the last spike
+        self.step_i = 0
         self.drive = np.zeros(self.n, dtype=np.float64)  # sensory rate, Hz
         self.t = 0.0
 
@@ -100,9 +114,11 @@ class FishSim:
     def _step(self, dt=DT):
         # leak
         self.v += (REST_V - self.v) * (dt / TAU)
-        # synaptic input, low-passed
-        self.v += self.isyn
-        self.isyn *= np.exp(-dt / TAU_SYN)
+        # synaptic input: isyn is charge left to deliver; each step hands over
+        # a TAU_SYN-fraction of it, so one spike of weight w adds w mV in total
+        kick = self.isyn * (dt / TAU_SYN)
+        self.v += kick
+        self.isyn -= kick
         # sensory Poisson input
         prob = 1.0 - np.exp(-self.drive * dt)
         hits = self.rng.random(self.n) < prob
@@ -113,8 +129,10 @@ class FishSim:
         self.v[blocked] = REST_V
         # fire
         fired = (self.v >= THRESH_V) & ~blocked
+        self.step_i += 1
         if fired.any():
             self.spike_counts[fired] += 1
+            self.last_spike[fired] = self.step_i
             self.v[fired] = REST_V
             self.refract[fired] = TAU_REF
             # distribute to postsynaptic targets
@@ -145,13 +163,17 @@ class FishSim:
         self.spike_counts[:] = 0
 
         def rate(name):
+            """Mean firing rate per neuron in the population, Hz."""
             idx = self.groups.get(name)
             if idx is None or len(idx) == 0:
                 return 0.0
-            return int(window_spikes[idx].sum()) / (window_steps * dt)
+            return float(window_spikes[idx].sum()) / (len(idx) * window_steps * dt)
 
         rates = {g: rate(g) for g in self.groups}
+        recent = self.last_spike >= self.step_i - FLASH_STEPS
         return {
+            "firing_mask": base64.b64encode(np.packbits(recent).tobytes()).decode("ascii"),
+            "firing_recent": int(recent.sum()),
             "t": round(self.t, 3),
             "neurons": int(self.n),
             "spikes_per_sec": int(window_spikes.sum() / (window_steps * dt)),
@@ -162,59 +184,89 @@ class FishSim:
             if "spinal" in self.groups else 0,
             "rates_hz": {k: round(v, 2) for k, v in rates.items()},
             "firing_indices": firing.tolist(),
-            "scatter": self.coords[firing].tolist()
-            if len(firing) else [],
             "vetoed": 0,  # set by the roamer, not the brain
         }
 
     # -- behavior decode ----------------------------------------------------
-    def decode(self, rates):
-        """Map population rates onto the behaviors a larval fish actually has."""
+    def decode(self, rates, rest=None):
+        """Map population rates onto the behaviors a larval fish actually has.
+        `rest` = resting rates per population (the roamer passes running
+        averages, so a bout is a rise above the fish's own recent baseline)."""
+        rest = rest or {}
+        nmlf_rest = rest.get("nmlf", NMLF_REST)
+        vspn_rest = rest.get("vspn", VSPN_REST)
         out = {"dx": 0.0, "dy": 0.0, "scroll": 0.0, "turn": 0.0, "escape": False}
 
-        pairs = {
-            "dsgc_up": (0.0, 1.0),
-            "dsgc_down": (0.0, -1.0),
-            "dsgc_left": (-1.0, 0.0),
-            "dsgc_right": (1.0, 0.0),
-        }
-        best = None
-        for name, (gx, gy) in pairs.items():
-            r = rates.get(name, 0.0)
-            if best is None or r > best[1]:
-                best = ((gx, gy), r)
-        (dx, dy), strongest = best
-        scale = min(1.0, strongest / 40.0)  # 40 Hz drives full-speed steering
-        out["dx"], out["dy"] = dx * scale, dy * scale
+        # a fish steers by asymmetry: the difference between opposed DSGC
+        # pairs, not the loudest one — a balanced field is no steering at all
+        up, dn = rates.get("dsgc_up", 0.0), rates.get("dsgc_down", 0.0)
+        lf, rt = rates.get("dsgc_left", 0.0), rates.get("dsgc_right", 0.0)
+        out["dx"] = float(np.clip((rt - lf) / max(rt + lf, 1.0), -1.0, 1.0))
+        out["dy"] = float(np.clip((dn - up) / max(dn + up, 1.0), -1.0, 1.0))
+        strongest = max(up, dn, lf, rt)
 
-        # nMLF bout gate -> burst scrolling (a swim bout = a scroll burst)
-        out["scroll"] = min(1.0, rates.get("nmlf", 0.0) / 30.0)
+        # nMLF bout gate -> a scroll burst when the population rises above rest
+        out["scroll"] = float(np.clip((rates.get("nmlf", 0.0) - nmlf_rest) / NMLF_SPAN, 0.0, 1.0))
 
-        # vSPN sets turn direction, signs against the DSGC winner
-        out["turn"] = min(1.0, rates.get("vspn", 0.0) / 20.0) * (-1 if strongest else 1)
+        # vSPN above rest -> a turn, signed against the DSGC winner
+        out["turn"] = float(np.clip((rates.get("vspn", 0.0) - vspn_rest) / VSPN_SPAN, 0.0, 1.0)) * (-1 if strongest else 1)
 
-        # Mauthner: an escape is all-or-nothing and fast
-        out["escape"] = rates.get("mauthner", 0.0) > 0.0
+        # Mauthner: an escape is all-or-nothing and fast — a startle is a burst,
+        # not the odd coincidence spike a cell with hundreds of inputs throws
+        out["escape"] = rates.get("mauthner", 0.0) > ESCAPE_HZ
         return out
 
 
-def smoke():
-    """Drive the smoke graph with a rightward + a startle input and check."""
-    graph = load_graph("build/graph.npz", "build/groups.json")
+NEED = ["retina", "dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right",
+        "nmlf", "vspn", "mauthner", "spinal"]
+
+
+def smoke(graph_path="build/graph.npz", groups_path="build/groups.json"):
+    """Checks that hold for any graph we run — the toy one and the synthetic one.
+
+    1. under a plain retina drive every readout population fires (> 0 Hz) and
+       none saturates (< 350 Hz; the 2 ms refractory ceiling is 500)
+    2. a rightward DSGC drive steers right
+    3. Mauthner sits below ESCAPE_HZ at rest and a whole-field flash lifts it
+       at least 5x — the startle is a burst, not a habit
+    """
+    graph = load_graph(graph_path, groups_path)
+    label = graph["meta"].get("label", "graph")
     sim = FishSim(graph)
-    sim.set_drive(graph["groups"]["retina"], 120.0)
-    sim.set_drive(graph["groups"]["dsgc_right"], 120.0)
-    d1 = sim.run(400)
-    dec1 = sim.decode(d1["rates_hz"])
-    sim.set_drive(graph["groups"]["mauthner"], 0.0)  # not a real Mauthner drive
-    assert sum(map(abs, (dec1["dx"], dec1["dy"]))) > 0, "rightward input should steer"
-    print("smoke OK:", dec1)
-    # startle: strong retina everywhere drives escape via the M-cell path
-    sim2 = FishSim(graph, seed=3)
-    sim2.set_drive(graph["groups"]["retina"], 400.0)
-    d2 = sim2.run(400)
-    dec2 = sim2.decode(d2["rates_hz"])
-    print("startle OK:", dec2)
+    sim.set_drive(graph["groups"]["retina"], 60.0)
+    for _ in range(3):
+        d1 = sim.run(400)  # let the recurrent pools settle
+    r1 = d1["rates_hz"]
+    dead = [g for g in NEED if r1.get(g, 0.0) <= 0.0]
+    hot = [g for g in NEED if r1.get(g, 0.0) >= 350.0]
+    print(f"[{label}] rest rates:", {g: r1[g] for g in NEED})
+    if graph["meta"].get("source") != "smoke":
+        assert not dead, f"silent populations under retina drive: {dead}"
+    assert not hot, f"saturated populations: {hot}"
+    assert r1.get("mauthner", 0.0) < ESCAPE_HZ, "Mauthner startles at rest"
+    rest = sim.decode(r1)
+    assert not rest["escape"] and rest["scroll"] < 0.45 and abs(rest["turn"]) < 0.5, \
+        f"a still page should not make the fish bout, turn or escape: {rest}"
+    print("rest decode OK:", {k: round(v, 2) if isinstance(v, float) else v for k, v in rest.items()})
+
+    sim2 = FishSim(graph, seed=5)
+    sim2.set_drive(graph["groups"]["retina"], 60.0)
+    sim2.set_drive(graph["groups"]["dsgc_right"], 120.0)
+    dec = sim2.decode(sim2.run(400)["rates_hz"])
+    assert dec["dx"] > 0, f"rightward input should steer right, got {dec}"
+    print("steer OK:", dec)
+
+    sim3 = FishSim(graph, seed=3)
+    sim3.set_drive(graph["groups"]["retina"], 60.0)
+    base = sim3.run(400)["rates_hz"].get("mauthner", 0.0)
+    sim3.set_drive(graph["groups"]["retina"], 400.0)  # the flash
+    for g in ("dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right"):
+        sim3.set_drive(graph["groups"][g], 200.0)
+    flash = sim3.run(200)["rates_hz"].get("mauthner", 0.0)
+    print(f"startle: mauthner {base:.1f} Hz at rest -> {flash:.1f} Hz on a flash (escape at {ESCAPE_HZ})")
+    if graph["meta"].get("source") != "smoke":
+        assert flash >= max(5 * base, ESCAPE_HZ), "a whole-field flash should startle the Mauthner cell"
+    print("smoke OK")
 
 
 def main():
@@ -230,9 +282,9 @@ def main():
     for side in ("right", "up"):
         sim.set_drive(graph["groups"].get(f"dsgc_{side}", []), 100.0)
     d = sim.run(args.steps)
-    print(json.dumps({k: v for k, v in d.items() if k != "scatter"}, indent=2))
+    print(json.dumps({k: v for k, v in d.items() if k not in ("firing_indices", "firing_mask")}, indent=2))
     print("decode:", sim.decode(d["rates_hz"]))
-    smoke()
+    smoke(args.graph, args.groups)
 
 
 if __name__ == "__main__":

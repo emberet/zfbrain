@@ -1,0 +1,5 @@
+# zfbrain-live — a remotely-managed Cloudflare tunnel. Ingress lives in the
+# Cloudflare dashboard/API (live.zfbrain.online -> http://127.0.0.1:4660), so
+# this file only pins local behaviour. Run via bin/tunnel.sh, never with the
+# default ~/.cloudflared/config.yml (that one belongs to another project).
+no-autoupdate: true

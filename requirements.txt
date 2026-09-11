@@ -1,8 +1,18 @@
-# What soldryrun/sollive/solkeygen/solrpc ACTUALLY import (grep census, not
-# cargo): solders (solders.keypair/pubkey/transaction + token-2022 ext),
-# base58 (secrets never printed, only b58 addresses), requests (thin RPC).
-# NOTE: "solana" and "spl.token" PyPI SDKs are NOT imported by anything here —
-# they existed in an earlier cargo guess and died the moment the census ran.
+# Everything the repo actually imports.
+#
+# brain + roamer
+numpy>=1.26
+pandas>=2.0            # build_graph.py (CSV -> graph.npz)
+playwright>=1.45       # roam.py — then run: python -m playwright install chromium
+pillow>=10.0           # roam.py — decodes the screenshot for the retina + live frame
+#
+# solana launch rig (solkeygen / soldryrun / sollive / solrpc)
 solders>=0.18
 base58>=2.1
 requests>=2.31
+#
+# narrator (voice.py) — Anthropic SDK; needs ANTHROPIC_API_KEY in .env
+anthropic>=0.40
+#
+# data spike only (fetch_cave.py); not needed to run the fish
+# caveclient
