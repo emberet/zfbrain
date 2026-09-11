@@ -1,47 +1,55 @@
 # ZFBRAIN
 
-A living **larval zebrafish connectome** on the open internet, funded with its
-own memecoin — the same idea as the fruit-fly project (fruitflydev/flycoinrh,
-flybrain.online), but with a vertebrate brain and a different nervous system.
+Larval-5 **zebrafish connectome** — a whole-vertebrate-brain project whose
+cells and synapses are the real ones from the first fish brain ever published
+(Fish1, Harvard Lichtman/Engert + Google): 187k neurons, 30M+ synapses,
+download-on-demand, CC-BY research release.
 
-- read pages through a **retinotopic retina** (luminance + optic-flow DSGC
-  channels, lower-posterior biased the way a larva's OMR is)
-- behaves with the neurons a real larva uses: **DSGCs steer**, the **nMLF bout
-  gate** bursts the scroll, **vSPN** flips it, and the **Mauthner cell** fires
-  an all-or-nothing escape
-- signs and launches **$ZFBRAIN** on the pons launchpad, Robinhood Chain
-  (chain id 4663), through its own wallet — exactly the fly's launch path
+Every "creature" behaviour runs on those actual circuits — there is no fake
+brain talking to a fake market. There is a fish, and there is art.
 
-## The one honest caveat up front
+## What it is
 
-The fly had a finished connectome; a 1.1 GB download and you're off. Fish1
-(Harvard Lichtman/Engert + Google, CC-BY research release) is the **first
-whole-brain vertebrate connectome** — 187,053 cells, 30M synapses — but it is
-still being proofread and lives in a CAVE database. So this project is
-**circuit-first**: we run the behavior circuits the release paper already
-dissected — OMR, Mauthner escape, hindbrain integrator — and widen the graph
-as proofreading completes. Read `NOTEPAD.md` for the data spike that decides
-exactly how wide day-one is.
+- a **retinotopic retina** (luminance + optic-flow DSGC channels, biased the
+  way a larval OMR actually is)
+- **real larva circuits**: DSGCs steer, the nMLF bout gate paces, vSPN flips
+  direction, the Mauthner cell fires an all-or-nothing escape
+- a **browser it reads through** — allowed sites only, veto list, no wallet,
+  no keyboard, no downloads
+- a **memecoin on Solana** (`$ZFBRAIN`) — Token-2022, transfer-fee tax,
+  launchpad: pump.fun, secondary: Raydium
+
+## The honest bit (kept loud on purpose)
+
+- The graph is **circuit-first**, not finished. The full fish connectome is
+  still being proofread; day one runs the circuits the release already
+  maps and widens as the proofreading ships. `NOTEPAD.md` says exactly how
+  wide day-one is.
+- The **words are a narrator**, not the fish's language. Every post is an LLM
+  given real telemetry + real token numbers, then number-checked; a draft
+  whose numbers aren't in that packet is thrown away.
+- **Nothing on this repo is financial advice.** It is developmental
+  neuroscience as an art object.
 
 ## Layout
 
 ```
-fetch_cave.py      Fish1 -> data/raw/*.csv (DCV: confirm datastack/tables)
-build_graph.py     data/raw -> build/graph.npz + groups.json (--smoke works today)
-fishsim.py         LIF whole-graph sim; behavior readout panels; smoke test
-retina.py          luminance + 4-channel optic-flow retina
-roam.py            the fish on the open internet (browser, fence, veto, /state)
-rhwallet.py        create the wallet (writes to .env, prints only the address)
-rhprovider.py      Robinhood Chain RPC (chain id 4663)
-rhdryrun.py        prove sign + recover + estimate; never broadcasts
-rhlive.py          drive the pons launchpad to a real launch (ZF_RH_LIVE=1)
+fetch_cave.py      Fish1 connectome -> data/raw/*.csv (download on demand)
+build_graph.py     data/raw -> build/graph.npz + groups.json (--smoke works)
+fishsim.py         LIF brain sim; behaviour readouts + smoke tests
+retina.py          luminance + optic-flow retina
+roam.py            the browser (allowlist, veto, heartbeat -> site/web/live.json)
 voice.py           the narrator (observe -> read -> draft -> number-check -> post)
-xpost.py           capped, deduped posting (safe to run with no POST_URL)
-site/index.html    flybrain.online-style live page (static, reads web/live.json)
-NOTEPAD.md         the running todo list for whoever drives this
+xpost.py           capped, deduped posting (safe with no POST_URL set)
+solkeygen.py       Solana wallet (Ed25519, base58; address printed, seed never)
+solrpc.py          thin Solana RPC surface (blockhash/balance/simulate/send)
+sollive.py         mainnet launch driver — ZF_SOL_LIVE=1 gate, pump.fun launch
+soldryrun.py       honest devnet full-sim twin (free air, nothing broadcast)
+site/index.html    the status panel (at /state after roam starts)
+NOTEPAD.md         the running todo list
 ```
 
-## Quickstart
+## Run it
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -50,51 +58,20 @@ python -m playwright install chromium
 
 # brain without data (works now):
 python build_graph.py --smoke
-python fishsim.py            # smoke: rightward input steers, strong input startles
+python fishsim.py
 
-# real data (NOTEPAD.md step 1 first):
-python fetch_cave.py
-python build_graph.py
-
-# the fish on the internet (nowhere without the brain built):
-cp .env.example .env          # set ZF_ALLOW_BROWSER=1
-python roam.py                # http://localhost:4660/state
-
-# the memecoin half:
-python rhwallet.py new        # fund ~0.002 ETH on Robinhood Chain
-python rhdryrun.py            # signing path, spends nothing
-python rhlive.py              # real launch (needs ZF_RH_LIVE=1 too)
+# show a dry-run launch rig, free air, nothing broadcast:
+cp .env.example .env
+python solkeygen.py --env     # prints only the address
+python soldryrun.py           # devnet sim, nothing ever broadcast
 ```
 
-Two flags gate everything dangerous, both off by default: **`ZF_ALLOW_BROWSER=1`**
-opens a browser against real sites, **`ZF_RH_LIVE=1`** signs and broadcasts a
-transaction. Nothing else arms it.
+Two flags gate everything that touches the outside, both off: `ZF_ALLOW_BROWSER`
+and `ZF_SOL_LIVE`. `soldryrun` is devnet-only by construction; `sollive --send`
+is the only broadcast path and refuses to run without `ZF_SOL_LIVE=1`.
 
-## The rails, and why
+## Licence
 
-The same reasoning as the fly's rails. The roaming browser has **no wallet, no
-keyboard, no downloads**. Every click is checked before it lands and vetoed if
-it reads as a submit, a pay wall, a connect or a sign-in — the veto count is on
-the site. It roams an **allowlist** of link-rich public sites and its own
-coin's pages; `ZF_ROAM_OPEN=1` removes that fence and should not be left on for
-an unattended public stream.
-
-## What is NOT real, stated plainly
-
-- **The graph is a circuit-first slice**, not the finished brain — see above.
-- **The words are a narrator.** The fish has no language. Every post is written
-  by an LLM handed real telemetry and the live token numbers, and a draft with
-  a number not in that packet — or with trading language — is thrown away.
-- **There is no internal goal.** No reward circuit feeds back; the mushroom-body
-  equivalence the fly has is out of scope until a real one exists.
-- **The launch rig completes the form.** The fish fills fields by texture and
-  lands clicks through its real circuits; paired asset, tax and handle come
-  from config, and `live.log` labels which was which.
-- **$ZFBRAIN is an art experiment, not an investment.**
-
-## Credits
-
-Connectome: Fish1 (Lichtman/Engert labs, Harvard + Google Research), CC-BY
-research release; Fish-X (bioRxiv 2025) and mapZebrain as supplements. Model
-approach after Shiu et al. 2024 and simZFish (Liu et al. 2025). Not affiliated
-with Fish1's authors, pons, or Robinhood.
+Model after Shiu et al. 2024 / simZFish (Liu et al. 2025); connectivity from
+the Fish1 / Lichtman-Engert research release (CC-BY). Own trackpads, own
+decisions.
