@@ -23,14 +23,16 @@ import re
 import sys
 from pathlib import Path
 
-VENDOR = {
-    "5494d1a4-6b33-43de-866e-2b6ec484de73": "vendor/ds-bundle.js",
-    "1de82006-3c75-43d7-a301-075dff2a0da7": "vendor/dc-runtime.js",
-}
-EXT_NAMES = {
-    "https://unpkg.com/react@18.3.1/umd/react.production.min.js": "vendor/react.production.min.js",
-    "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js": "vendor/react-dom.production.min.js",
-}
+# Every bundle mints fresh uuids, so nothing here may be hardcoded: the
+# vendor scripts are whatever the template loads by <script src="uuid">, and
+# their names come from sniffing the decompressed bytes.
+def _vendor_name(body, i):
+    head = body[:400].decode("utf-8", "replace")
+    if "dc-runtime" in head or "DCLogic" in head:
+        return "vendor/dc-runtime.js"
+    if "@ds-bundle" in head or "__ds_ns" in head:
+        return "vendor/ds-bundle.js"
+    return f"vendor/bundled-{i}.js"
 
 FONT_FACE_RE = re.compile(
     r"/\*\s*(?P<subset>[\w-]+)\s*\*/\s*@font-face\s*\{(?P<body>.*?)\}", re.S)
@@ -61,19 +63,25 @@ def main(bundle, out):
     for d in ("vendor", "fonts", "styles"):
         (out / d).mkdir(parents=True, exist_ok=True)
 
-    names = dict(VENDOR)
+    names = {}
+    # scripts the template pulls in by uuid
+    for i, uuid in enumerate(re.findall(r'<script[^>]*src=\\?"([0-9a-f-]{36})', template)):
+        names[uuid] = _vendor_name(_decode(manifest[uuid]), i)
+    # externals (React and friends) keep their own filenames
     for r in ext:
-        if r["id"] in EXT_NAMES:
-            names[r["uuid"]] = EXT_NAMES[r["id"]]
+        names[r["uuid"]] = "vendor/" + r["id"].rsplit("/", 1)[-1]
 
     # --- styles: two <style> blocks inside <helmet> -----------------------
     styles = re.findall(r"<style[^>]*>(.*?)</style>", template, re.S)
-    if len(styles) < 2:
-        raise SystemExit(f"expected 2 <style> blocks in the template, found {len(styles)}")
-    industry, zf = styles[0], styles[1]
+    if not styles:
+        raise SystemExit("no <style> block in the template")
+    # the first block is the design system (it carries the @font-face rules);
+    # anything after it is page CSS
+    industry, rest = styles[0], styles[1:]
 
-    # fonts: name by family/weight/subset from the @font-face blocks
-    for m in FONT_FACE_RE.finditer(industry):
+    # fonts: name by family/weight/subset from every @font-face block in the
+    # template (a design can carry more than one stylesheet)
+    for m in FONT_FACE_RE.finditer(template):
         body, subset = m.group("body"), m.group("subset")
         fam = re.search(r"font-family:\s*'([^']+)'", body).group(1)
         weight = re.search(r"font-weight:\s*(\d+)", body).group(1)
@@ -89,11 +97,14 @@ def main(bundle, out):
     if unused:
         raise SystemExit(f"unmapped manifest entries: {sorted(unused)}")
 
-    for uuid, rel in names.items():
-        if rel.startswith("fonts/"):
-            industry = industry.replace(f'url("{uuid}")', f'url("../{rel}")')
-    (out / "styles/industry.css").write_text(industry.strip() + "\n", encoding="utf-8")
-    (out / "styles/zf.css").write_text(zf.strip() + "\n", encoding="utf-8")
+    def fix_fonts(css):
+        for uuid, rel in names.items():
+            if rel.startswith("fonts/"):
+                css = css.replace(f'url("{uuid}")', f'url("../{rel}")')
+        return css
+    (out / "styles/industry.css").write_text(fix_fonts(industry).strip() + "\n", encoding="utf-8")
+    (out / "styles/zf.css").write_text(
+        "\n\n".join(fix_fonts(b).strip() for b in rest) + "\n", encoding="utf-8")
 
     # --- page --------------------------------------------------------------
     body = re.search(r"<body[^>]*>(.*)</body>", template, re.S).group(1)
@@ -102,6 +113,13 @@ def main(bundle, out):
         body = body.replace(f'src="{uuid}"', f'src="{rel}"')
     body = body.strip()
 
+    # React first (the runtime skips its own CDN fetch when window.React exists),
+    # then the design-system bundle, then the runtime that boots the page
+    order = ["react.production.min.js", "react-dom.production.min.js",
+             "ds-bundle.js", "dc-runtime.js"]
+    vend = [v for v in names.values() if v.startswith("vendor/")]
+    vend.sort(key=lambda v: (order.index(v.split("/")[1]) if v.split("/")[1] in order else 99, v))
+    scripts = "\n".join(f'<script src="{v}"></script>' for v in vend)
     page = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -111,9 +129,7 @@ def main(bundle, out):
 <meta name="description" content="A living larval-zebrafish connectome roaming the open internet, funded with its own memecoin. Live telemetry, honest about what is and isn't real.">
 <link rel="stylesheet" href="styles/industry.css">
 <link rel="stylesheet" href="styles/zf.css">
-<script src="vendor/react.production.min.js"></script>
-<script src="vendor/react-dom.production.min.js"></script>
-<script src="vendor/dc-runtime.js"></script>
+{scripts}
 </head>
 <body>
 {body}

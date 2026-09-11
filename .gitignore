@@ -30,3 +30,6 @@ dist/
 # would be published by zfsite.py as a stale snapshot nothing reads
 site/live.json
 site/web/
+
+# macOS junk that would otherwise ride into a deploy
+site/.DS_Store
