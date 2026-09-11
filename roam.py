@@ -38,6 +38,7 @@ Usage:
 import io
 import json
 import os
+import random
 import sys
 import threading
 import time
@@ -57,11 +58,25 @@ DEFAULT_ALLOWLIST = [
     "openlibrary.org", "arxiv.org", "xkcd.com",
     "pump.fun", "raydium.io", "solscan.io", "explorer.solana.com",
 ]
-HOME = "https://en.wikipedia.org/wiki/Zebrafish"
+HOME_SEEDS = [
+    # the fish starts a fresh life at a random one of these, then wanders.
+    # no captcha-walled sites here (solscan etc.) — they freeze the browser.
+    "https://en.wikipedia.org/wiki/Zebrafish",
+    "https://en.wikipedia.org/wiki/Fish",
+    "https://www.gutenberg.org/",
+    "https://openlibrary.org/",
+    "https://arxiv.org/list/q-bio.NC/recent",
+    "https://xkcd.com/",
+    "https://en.wikipedia.org/wiki/Aquarium",
+    "https://archive.org/",
+    "https://en.wikisource.org/",
+]
+HOME = HOME_SEEDS[0]  # fallback only; _new_life picks a random seed
 VETO_WORDS = (
     "submit", "sign in", "sign up", "login", "log in", "connect wallet",
     "buy", "pay", "purchase", "checkout", "install", "download", "upload",
     "launch token", "confirm", "join", "subscribe", "get started",
+    "captcha", "verify you are human", "i'm not a robot", "challenge",
 )
 VIEW_W, VIEW_H = 1280, 800        # the fish's viewport
 FRAME_W, FRAME_H = 640, 400       # the published frame
@@ -140,6 +155,7 @@ class Roamer:
         self._mask_seq = 0
         self._mask_at = 0.0
         self._life = 0
+        self._seed = HOME_SEEDS[0]
         self._quiet_turns = 0
         self._cursor = (VIEW_W // 2, VIEW_H // 2)
         self._page_url = None
@@ -219,6 +235,96 @@ class Roamer:
                 return w
         return None
 
+    # ---- escape: dart to a fresh seed (a startled larva leaves the page) ----
+    def _look(self, page, cx, cy, max_dist=180):
+        """A bored fish looks for a link it can actually follow. Returns True
+        if it found a safe one within reach and clicked it, else False.
+        Scanning is greedy from the point of gaze outward, veto-clean.
+        Links that stay on the same URL (SPA dead ends) and file downloads
+        (which the context refuses) are skipped -- a click must change the
+        page or it was never a real option."""
+        before = page.url
+        try:
+            near = page.evaluate(
+                """([cx, cy, r, here]) => {
+                     const els = Array.from(document.querySelectorAll('a[href]'));
+                     const scored = [];
+                     for (const el of els) {
+                       const href = (el.getAttribute('href') || '').trim();
+                       if (!href || href.startsWith('#') || href.includes('javascript:')) continue;
+                       const url = new URL(href, here);
+                       if (url.href === here) continue;          // dead end: same page
+                       if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+                       if (/\\.(pdf|zip|tar|gz|exe|dmg|iso|tar\\.gz)(\\?|$)/i.test(url.pathname)) continue;
+                       const t = (el.innerText || '').trim();
+                       if (!t || t.length > 120) continue;
+                       const b = el.getBoundingClientRect();
+                       if (b.width === 0 && b.height === 0) continue;
+                       const x = b.left + b.width / 2, y = b.top + b.height / 2;
+                       const d = Math.hypot(x - cx, y - cy);
+                       if (d <= r) scored.push({x, y, d, t});
+                     }
+                     scored.sort((a, b) => a.d - b.d);
+                     return scored; }""",
+                [cx, cy, max_dist, before])
+        except Exception:  # noqa: BLE001
+            return False
+        for link in near:
+            x, y = int(link["x"]), int(link["y"])
+            if self.veto(page, x, y):
+                continue
+            try:
+                page.mouse.move(x, y)
+                page.mouse.click(x, y)
+            except Exception:  # noqa: BLE001 — a download/JS link must not kill the life
+                continue
+            self.stats["clicks"] += 1
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=3000)
+            except Exception:  # noqa: BLE001
+                pass
+            if page.url == before:  # dead click — try the next candidate
+                continue
+            self._event("look", "wants something new · followed a link")
+            time.sleep(0.8)
+            return True
+        if self.veto(page, cx, cy):
+            self.stats["vetoed"] += 1
+            self._event("veto", "wanted a link, all in reach were unsafe")
+        else:
+            self._event("look", "no real links in reach · tried them all")
+        return False
+
+    def _is_captcha_page(self, page):
+        try:
+            title = page.title().lower()
+        except Exception:  # noqa: BLE001
+            title = ""
+        if any(w in title for w in ("captcha", "verify you are human",
+                                    "i'm not a robot", "challenge", "cf-error")):
+            return True
+        try:
+            txt = page.evaluate(
+                "() => (document.body ? document.body.innerText : '').toLowerCase()")
+        except Exception:  # noqa: BLE001
+            return False
+        return any(w in txt for w in ("cf-challenge", "enable javascript and cookies",
+                                      "checking your browser before accessing",
+                                      "verify you are human", "i'm not a robot",
+                                      "press and hold the button",
+                                      "captcha required"))
+    def _escape_to_fresh(self, page):
+        others = [h for h in HOME_SEEDS if h != self._seed]
+        seed = random.choice(others) if others else HOME_SEEDS[0]
+        self._seed = seed
+        self._event("escape", f"Mauthner fired · darted to {_short_url(seed)}")
+        try:
+            page.goto(seed, wait_until="domcontentloaded")
+        except Exception:  # noqa: BLE001 — a dead seed must not crash the life
+            self._seed = HOME_SEEDS[0]
+            page.goto(self._seed, wait_until="domcontentloaded")
+        self._page_url = None
+
     # ---- one life ----------------------------------------------------
     def _new_life(self, browser):
         ctx = browser.new_context(
@@ -228,13 +334,20 @@ class Roamer:
         page = ctx.new_page()
         page.set_default_timeout(15000)
         page.on("popup", lambda p: p.close())  # no popups, one page per life
-        page.goto(HOME, wait_until="domcontentloaded")
+        seed = random.choice(HOME_SEEDS)
+        self._seed = seed
+        try:
+            page.goto(seed, wait_until="domcontentloaded")
+        except Exception:  # noqa: BLE001 — a dead seed must not end the life
+            seed = HOME_SEEDS[0]
+            self._seed = seed
+            page.goto(seed, wait_until="domcontentloaded")
         self._life += 1
         self._quiet_turns = 0
         self._cursor = (VIEW_W // 2, VIEW_H // 2)
         self._page_url = None
         self.stats["pages"] += 1
-        self._event("life", f"life {self._life} started · {_short_url(HOME)}")
+        self._event("life", f"life {self._life} started · {_short_url(seed)}")
         return page
 
     def _note_page(self, page):
@@ -258,7 +371,7 @@ class Roamer:
         for group, hz in rates.items():
             self.sim.set_drive(self.groups.get(group, []), hz)
         detail = self.sim.run(SIM_STEPS)
-        for g in ("nmlf", "vspn"):  # slow baseline (~8 s); a burst rides above it
+        for g in ("nmlf", "vspn", "mauthner"):  # slow baselines (~8 s); a burst rides above them
             hz = detail["rates_hz"].get(g, 0.0)
             self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
         dec = self.sim.decode(detail["rates_hz"], rest=self._rest)
@@ -296,41 +409,31 @@ class Roamer:
         elif self._reafference:
             self._reafference -= 1
 
-        # Mauthner escape -> dart away: back one page, cursor to a corner
+        # Mauthner escape -> dart away: a startled larva clears the field and
+        # lands on a fresh seed elsewhere; it never pins itself to the same page.
         if dec["escape"] and not self._reafference and time.time() - self._last_escape > 3.0:
             self._last_escape = time.time()
             self.stats["escapes"] += 1
             page.mouse.move(0 if np.random.rand() < 0.5 else VIEW_W - 1, 0)
-            try:
-                can_back = page.evaluate("() => history.length > 1")
-            except Exception:  # noqa: BLE001
-                can_back = False
-            if can_back:
-                self._event("escape", "Mauthner fired · escape, back one page")
-                try:
-                    page.go_back(wait_until="domcontentloaded")
-                except Exception:  # noqa: BLE001
-                    pass
-            else:
-                self._event("escape", "Mauthner fired · escape, darted to the corner")
+            self._quiet_turns = 0
+            self._escape_to_fresh(page)
             self._publish(detail, dec, out, img)
             return detail, hops_left
 
-        # quiet-freeze strike: a fish that has been still for a while strikes
+        # quiet-freeze strike: a fish that has been still for a while strikes.
+        # "what the fish is looking at" = the page; a strike means it wants
+        # something new, so aim at a real link near the cursor. No link within
+        # reach (text, whitespace, a dead end) = this page is exhausted →
+        # wander to a fresh seed rather than click dead pixels.
         quiet = abs(dec["dx"]) < 0.08 and abs(dec["dy"]) < 0.08 and dec["scroll"] < 0.3 and not moved
         self._quiet_turns = self._quiet_turns + 1 if quiet else 0
         if self._quiet_turns >= 15:
             self._quiet_turns = 0
-            word = self.veto(page, cx, cy)
-            if word:
-                self.stats["vetoed"] += 1
-                self._event("veto", f"click vetoed · looked like '{word}'")
-            else:
-                page.mouse.click(cx, cy)
-                self.stats["clicks"] += 1
-                self._event("click", f"click landed at ({cx}, {cy})")
-                time.sleep(1.2)
+            if self._look(page, cx, cy):
                 hops_left -= 1
+            else:
+                self._event("wander", "no links in reach · wandering to a fresh seed")
+                self._escape_to_fresh(page)
 
         self._publish(detail, dec, out, img)
         return detail, hops_left
@@ -397,15 +500,23 @@ class Roamer:
             self._write_state(state)
 
     def _write_state(self, state):
-        path = os.path.join(self.state_dir, "live.json")
-        tmp = path + ".tmp"
+        base = os.path.dirname(os.path.abspath(__file__))
+        seams = [os.path.join(self.state_dir, "live.json"),     # 1 brain (REAL)
+                 os.path.join(base, "site", "live.json"),       # 2 ROOT legal open twin
+                 os.path.join(base, "site", "web", "live.json")]  # 3 web twin
         try:
-            with open(tmp, "w") as f:
-                json.dump(state, f)
-            os.replace(tmp, path)
+            for seam in seams:
+                os.makedirs(os.path.dirname(seam), exist_ok=True)
+                if seam.endswith("/site/live.json") or seam == base + "/site/live.json" or "/site/live.json" in seam:
+                    _tmp = seam + ".core.tmp"
+                else:
+                    _tmp = seam + ".tmp"
+                with open(_tmp, "w") as f:
+                    json.dump(state, f)
+                os.replace(_tmp, seam)
             self._last_file_write = time.time()
         except OSError as exc:
-            print(f"live.json: {exc}", file=sys.stderr)
+            print(f"live.json seam: {exc}", file=sys.stderr)
 
     # ---- the loop -----------------------------------------------------
     def run(self, hops=None):
@@ -438,11 +549,14 @@ class Roamer:
                         _, h = self.step(page, h)
                         host = urlsplit(page.url).netloc.lower()
                         if not host:  # about:blank and friends — nothing to see
-                            self._event("fence", "blank page · back home")
-                            page.goto(HOME, wait_until="domcontentloaded")
+                            self._event("fence", "blank page · back to seed")
+                            page.goto(self._seed, wait_until="domcontentloaded")
                         elif not open_fence and not any(d in host for d in allow):
-                            self._event("fence", f"{host} is off the allowlist · back home")
-                            page.goto(HOME, wait_until="domcontentloaded")
+                            self._event("fence", f"{host} is off the allowlist · back to seed")
+                            page.goto(self._seed, wait_until="domcontentloaded")
+                        elif self._is_captcha_page(page):
+                            self._event("fence", "captcha wall · dart away")
+                            self._escape_to_fresh(page)
                         time.sleep(0.15)
                     self._event("life", f"life {self._life} · hop budget spent")
                 except Exception as exc:  # noqa: BLE001

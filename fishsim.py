@@ -58,6 +58,13 @@ DT = 0.0005
 EPSP = 4.0  # mV delivered to a post target by one spike over the strongest synapse (count 6)
 FLASH_STEPS = 10  # "fired this step" on the site = spiked within the last 5 ms
 ESCAPE_HZ = float(os.environ.get("ZF_ESCAPE_HZ", "30"))  # Mauthner rate that counts as a startle
+# An escape is a burst: Mauthner must rise above BOTH its own running baseline
+# (the fish's own recent average) AND the absolute floor.  A still page keeps
+# Mauthner steady below ESCAPE_HZ; a flash lifts it ≥5×, well above the burst
+# multiplier, so escape fires.  A hot page that keeps Mauthner at 40 Hz
+# continuously will NOT trigger escapes, because the baseline climbs with it.
+MAUTHNER_REST = float(os.environ.get("ZF_MAUTHNER_REST", "8.0"))  # fallback before baseline exists
+ESCAPE_BURST = float(os.environ.get("ZF_ESCAPE_BURST", "1.8"))    # × baseline = a true startle
 # A bout is nMLF rising above its own resting rate. How far above cannot be a
 # fixed number of Hz: the resting rate depends on the graph (3 Hz here, 30 Hz
 # on the small one), so the span scales with it, with a floor so a nearly
@@ -347,8 +354,13 @@ class FishSim:
         out["turn"] = float(np.clip((rates.get("vspn", 0.0) - vspn_rest) / vspn_span, 0.0, 1.0)) * (-1 if strongest else 1)
 
         # Mauthner: an escape is all-or-nothing and fast — a startle is a burst,
-        # not the odd coincidence spike a cell with hundreds of inputs throws
-        out["escape"] = rates.get("mauthner", 0.0) > ESCAPE_HZ
+        # not the odd coincidence spike a cell with hundreds of inputs throws.
+        # Burst = rise above the fish's own recent baseline by ESCAPE_BURST×,
+        # AND above the absolute floor ESCAPE_HZ.  A hot page that keeps M-cell
+        # high constantly does not count — that is a habit, not a startle.
+        m_rest = rest.get("mauthner", MAUTHNER_REST)
+        m_rate = rates.get("mauthner", 0.0)
+        out["escape"] = m_rate > ESCAPE_HZ and m_rate > m_rest * ESCAPE_BURST
         return out
 
 
