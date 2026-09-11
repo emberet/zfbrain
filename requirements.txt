@@ -1,0 +1,8 @@
+# What soldryrun/sollive/solkeygen/solrpc ACTUALLY import (grep census, not
+# cargo): solders (solders.keypair/pubkey/transaction + token-2022 ext),
+# base58 (secrets never printed, only b58 addresses), requests (thin RPC).
+# NOTE: "solana" and "spl.token" PyPI SDKs are NOT imported by anything here —
+# they existed in an earlier cargo guess and died the moment the census ran.
+solders>=0.18
+base58>=2.1
+requests>=2.31

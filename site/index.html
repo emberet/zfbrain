@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZFBRAIN · a larval zebrafish connectome on the open internet</title>
+<style>
+  :root { --bg:#0a0c10; --fg:#d8e0ea; --dim:#74808f; --acc:#46d6a3; --warn:#ffb454; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 ui-monospace,Menlo,Consolas,monospace; }
+  header { display:flex; justify-content:space-between; align-items:center;
+           padding:18px 24px; border-bottom:1px solid #1d2733; }
+  header h1 { font-size:18px; letter-spacing:.18em; margin:0; }
+  header .live { color:var(--acc); }
+  header .live.off { color:var(--warn); }
+  main { max-width:1080px; margin:0 auto; padding:24px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+  .panel { background:#0e1319; border:1px solid #1d2733; border-radius:8px; padding:14px; }
+  .panel h2 { font-size:11px; letter-spacing:.14em; color:var(--dim); margin:0 0 8px;
+              text-transform:uppercase; }
+  .panel .big { font-size:26px; margin:0; }
+  .panel .sub { color:var(--dim); font-size:12px; }
+  canvas#brain { width:100%; height:260px; background:#0a0c10; border:1px solid #1d2733;
+                 border-radius:8px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td,th { text-align:left; padding:4px 8px; border-bottom:1px solid #141c26; }
+  td.n { text-align:right; color:var(--acc); }
+  a { color:var(--acc); }
+  .page { color:var(--acc); word-break:break-all; }
+  .honest { color:var(--dim); }
+  .honest b { color:var(--fg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ZFBRAIN</h1>
+  <span id="status" class="live off">● between runs</span>
+</header>
+<main>
+  <div class="grid">
+    <div class="panel"><h2>Specimen</h2>
+      <p class="big" id="neurons">–</p>
+      <p class="sub">larval zebrafish · circuit-first graph</p>
+    </div>
+    <div class="panel"><h2>Neurons firing</h2>
+      <p class="big" id="firing">0</p>
+      <p class="sub" id="sps">0 spikes/sec</p>
+    </div>
+    <div class="panel"><h2>Membrane</h2>
+      <p class="big" id="membrane">–</p>
+      <p class="sub">mean mV</p>
+    </div>
+    <div class="panel"><h2>Where it is</h2>
+      <p id="where" class="page">—</p>
+      <p class="sub">&nbsp;</p>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:14px">
+    <h2>Brain · every dot is a neuron at its measured soma coordinate</h2>
+    <canvas id="brain"></canvas>
+  </div>
+
+  <div class="grid" style="margin-top:14px">
+    <div class="panel"><h2>Behaviors (rates Hz)</h2>
+      <table>
+        <tr><th>DSGC up</th><td class="n" id="r_up">0</td></tr>
+        <tr><th>DSGC down</th><td class="n" id="r_down">0</td></tr>
+        <tr><th>DSGC left</th><td class="n" id="r_left">0</td></tr>
+        <tr><th>DSGC right</th><td class="n" id="r_right">0</td></tr>
+        <tr><th>nMLF (bouts)</th><td class="n" id="r_nmlf">0</td></tr>
+        <tr><th>vSPN (turn)</th><td class="n" id="r_vspn">0</td></tr>
+        <tr><th>Mauthner (escape)</th><td class="n" id="r_mauthner">0</td></tr>
+      </table>
+    </div>
+    <div class="panel"><h2>The life it has had</h2>
+      <table>
+        <tr><th>pages visited</th><td class="n" id="pages">0</td></tr>
+        <tr><th>clicks</th><td class="n" id="clicks">0</td></tr>
+        <tr><th>scrolls</th><td class="n" id="scrolls">0</td></tr>
+        <tr><th>escapes</th><td class="n" id="escapes">0</td></tr>
+        <tr><th>vetoed clicks</th><td class="n" id="vetoed">0</td></tr>
+        <tr><th>brain steps</th><td class="n" id="steps">0</td></tr>
+      </table>
+    </div>
+    <div class="panel"><h2>$ZFBRAIN</h2>
+      <p>funded with its own memecoin · Robinhood Chain 4663</p>
+      <p class="sub">contract <span id="contract">launch pending</span></p>
+      <p class="sub"><a href="https://www.ponsfamily.com/launchpad" target="_blank">launchpad</a>
+       · <a href="https://robinhoodchain.blockscout.com" target="_blank">explorer</a></p>
+      <p class="honest">read the chain rather than taking this page's word.</p>
+    </div>
+  </div>
+
+  <div class="panel honest" style="margin-top:14px">
+    <h2 style="color:var(--warn)">what is not real, stated plainly</h2>
+    <p><b>The graph is a circuit-first slice, not the finished brain.</b> Fish1 is
+       still being proofread; we run the mapped behavior circuits (OMR, Mauthner
+       escape, hindbrain integrator) and expand as proofreading completes.</p>
+    <p><b>The reward signal does not exist yet.</b> A fish is motivated by more
+       than page novelty; ours has no goals. What you see is reaction, not intent.</p>
+    <p><b>The words are a narrator.</b> The fish has no language. Any journal
+       entry on X is written by a language model handed real telemetry — which
+       neurons fired, where the cursor went, the on-chain numbers — and every
+       number in a draft must appear in that packet or it is thrown away.</p>
+    <p><b>The launch rig completes the form.</b> The fish fills fields by texture
+       and lands clicks through its real circuits; the paired asset, tax and
+       handle are chosen in config, and which was which is logged.</p>
+    <p><b>It roams inside a fence.</b> An allowlist of link-rich public sites and
+       its own coin's pages. Every click is checked before it lands and vetoed
+       if it looks like a submit, a pay wall or a sign-in.</p>
+  </div>
+
+  <p class="honest" style="margin-top:22px">
+    Connectome: Fish1 (Lichtman/Engert, Harvard + Google), CC-BY research
+    release. $ZFBRAIN is an art experiment, not an investment.
+  </p>
+</main>
+
+<script>
+  async function poll() {
+    try {
+      const r = await fetch('web/live.json', {cache:'no-store'});
+      const s = await r.json();
+      apply(s);
+    } catch (e) { /* keep the last good frame */ }
+    setTimeout(poll, 2000);
+  }
+
+  function apply(s) {
+    const on = s.status === 'live' && s.brain;
+    document.getElementById('status').textContent = on ? '● live' : '● between runs';
+    document.getElementById('status').className = 'live ' + (on ? '' : 'off');
+    const st = s.stats || {};
+    document.getElementById('where').textContent = st.page || '—';
+    document.getElementById('pages').textContent = st.pages || 0;
+    document.getElementById('clicks').textContent = st.clicks || 0;
+    document.getElementById('scrolls').textContent = st.scrolls || 0;
+    document.getElementById('escapes').textContent = st.escapes || 0;
+    document.getElementById('vetoed').textContent = st.vetoed || 0;
+    document.getElementById('steps').textContent = (st.brain_steps||0).toLocaleString();
+    if (!on) return;
+    const b = s.brain;
+    document.getElementById('firing').textContent = (b.firing_indices||[]).length;
+    document.getElementById('sps').textContent = (b.spikes_per_sec||0) + ' spikes/sec';
+    document.getElementById('membrane').textContent = b.mean_membrane_mv ?? '–';
+    if (s.brain.neurons) document.getElementById('neurons').textContent = s.brain.neurons;
+    const r = b.rates_hz || {};
+    document.getElementById('r_up').textContent = r.dsgc_up ?? 0;
+    document.getElementById('r_down').textContent = r.dsgc_down ?? 0;
+    document.getElementById('r_left').textContent = r.dsgc_left ?? 0;
+    document.getElementById('r_right').textContent = r.dsgc_right ?? 0;
+    document.getElementById('r_nmlf').textContent = r.nmlf ?? 0;
+    document.getElementById('r_vspn').textContent = r.vspn ?? 0;
+    document.getElementById('r_mauthner').textContent = r.mauthner ?? 0;
+    draw(b.recent_scatter || b.scatter);
+  }
+
+  const cv = document.getElementById('brain');
+  const ctx = cv.getContext('2d');
+
+  function draw(points) {
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#141c26'; ctx.fillRect(0, 0, cv.width, cv.height);
+    if (!points || !points.length) { drawFishIdle(); return; }
+    const xs = points.map(p => p[0]), ys = points.map(p => p[1]);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const sx = (x1 - x0) || 1, sy = (y1 - y0) || 1;
+    ctx.fillStyle = '#46d6a3';
+    for (const p of points) {
+      const px = 10 + (p[0] - x0) / sx * (cv.width - 20);
+      const py = 10 + (p[1] - y0) / sy * (cv.height - 20);
+      ctx.fillRect(px, py, 2, 2);
+    }
+  }
+
+  // idle placeholder: a fish-shaped scatter so the page is honest that
+  // "between runs" is between runs, not a broken brain.
+  function drawFishIdle() {
+    ctx.fillStyle = '#1f3240';
+    for (let i = 0; i < 900; i++) {
+      const t = i / 900;
+      const bodyX = 40 + t * (cv.width - 80);
+      const bodyY = cv.height / 2 + Math.sin(t * 14) * 12 * (1 - t);
+      const r = 1 + Math.random();
+      if (Math.random() < 0.2) continue; // sparse like a real connectome slice
+      ctx.fillRect(bodyX, bodyY, r, r);
+    }
+  }
+
+  // The roamer writes state to .state/live.json; the hosted site publishes it.
+  // neurons count = graph size reported by the roamer's heartbeat.
+  fetch('web/live.json', {cache:'no-store'}).then(r => r.json()).then(s => {
+    if (s.brain && s.brain.neurons) document.getElementById('neurons').textContent = s.brain.neurons;
+  }).catch(()=>{});
+  poll();
+</script>
+</body>
+</html>

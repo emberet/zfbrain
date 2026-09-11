@@ -1,0 +1,21 @@
+# secrets
+.env
+
+# data & artifacts
+data/
+build/
+.state/
+recordings/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node / site builds
+node_modules/
+dist/
+
+# os
+.DS_Store
