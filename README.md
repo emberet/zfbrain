@@ -1,27 +1,13 @@
 # ZFBRAIN
 
 A living **larval zebrafish connectome** on the open internet, funded with its
-own memecoin — the same idea as the fruit-fly project (fruitflydev/flycoinrh,
-flybrain.online), but with a vertebrate brain and a different nervous system.
+own memecoin, a vertebrate brain and a different nervous system.
 
 - read pages through a **retinotopic retina** (luminance + optic-flow DSGC
   channels, lower-posterior biased the way a larva's OMR is)
 - behaves with the neurons a real larva uses: **DSGCs steer**, the **nMLF bout
   gate** bursts the scroll, **vSPN** flips it, and the **Mauthner cell** fires
   an all-or-nothing escape
-- signs and launches **$ZFBRAIN** on the pons launchpad, Robinhood Chain
-  (chain id 4663), through its own wallet — exactly the fly's launch path
-
-## The one honest caveat up front
-
-The fly had a finished connectome; a 1.1 GB download and you're off. Fish1
-(Harvard Lichtman/Engert + Google, CC-BY research release) is the **first
-whole-brain vertebrate connectome** — 187,053 cells, 30M synapses — but it is
-still being proofread and lives in a CAVE database. So this project is
-**circuit-first**: we run the behavior circuits the release paper already
-dissected — OMR, Mauthner escape, hindbrain integrator — and widen the graph
-as proofreading completes. Read `NOTEPAD.md` for the data spike that decides
-exactly how wide day-one is.
 
 ## Layout
 
