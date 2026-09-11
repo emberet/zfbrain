@@ -83,4 +83,4 @@ voice.py         the narrator (observe -> read -> draft -> number-check -> post)
 
 Connectome: Fish1 (Lichtman/Engert labs + Google, CC-BY research release),
 larval zebrafish. Model approach after Liu et al. 2025 (simZFish-like, for the
-zebrafish). No affiliation with Robinhood/brokerages.
+zebrafish). No affiliation with any brokerage.
