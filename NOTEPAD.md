@@ -113,6 +113,8 @@ the Dec-2027 paper embargo; Fish-X has the retina in the volume.)
 - [ ] **[HW]** `ANTHROPIC_API_KEY` in `.env` (voice.py uses the Anthropic SDK;
       `ZF_VOICE_MODEL` defaults to claude-sonnet-5). Without it `--dry` prints
       "no credentials" and stops.
+- [x] Handle chosen: **@zfbraindev** (x.com/zfbraindev), linked in the site
+      footer and set as `ZF_X_HANDLE` (2026-09-12).
 - [ ] Wire a posting endpoint (`POST_URL`) — X via a relay/tool of your choice.
       Posting is unsafe-empty by design: without POST_URL it just prints.
 - [ ] Optionally: if you want the posts written in *your* voice (the @emberetme

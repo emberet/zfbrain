@@ -1,6 +1,10 @@
 """Post engine for the narrator. Caps posts per day, refuses duplicates.
 Without POST_URL set it only prints, so the pipeline is safe to run empty.
 
+The account is ZF_X_HANDLE (@zfbraindev). Use a handle you own: posting as
+someone else's is impersonation, which is the one thing this project cannot
+do and stay what it says it is.
+
 Wire a real posting endpoint (X via a relay/tool of your choice) and set
 POST_URL in .env. The journal always records what was accepted.
 """
@@ -15,6 +19,7 @@ import requests
 STATE_DIR = Path(os.environ.get("ZF_STATE_DIR", ".state"))
 SEEN = STATE_DIR / "posted.jsonl"
 DAILY_CAP = int(os.environ.get("ZF_VOICE_DAILY_CAP", "8"))
+HANDLE = os.environ.get("ZF_X_HANDLE", "zfbraindev")
 
 
 def _seen():
@@ -46,13 +51,13 @@ def post(text, force=False):
     url = os.environ.get("POST_URL")
     if url:
         try:
-            r = requests.post(url, json={"text": text}, timeout=30)
+            r = requests.post(url, json={"text": text, "handle": HANDLE}, timeout=30)
             r.raise_for_status()
         except Exception as exc:  # noqa: BLE001
             print(f"post failed: {exc}")
             return False
     else:
-        print(f"[would post] {text}")
+        print(f"[would post as @{HANDLE}] {text}")
     with open(SEEN, "a") as f:
         f.write(json.dumps({"t": time.time(), "text": text}) + "\n")
     return True
