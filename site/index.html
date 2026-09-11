@@ -59,7 +59,7 @@
             </sc-for>
           </div>
           <div style="position:absolute;inset:0;display:{{ asleepDisplay }};align-items:center;justify-content:center;text-align:center;padding:24px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-300);">{{ asleepText }}</div>
-          <div style="position:absolute;display:{{ cursorDisplay }};left:{{ cursorX }};top:{{ cursorY }};width:14px;height:14px;margin:-7px 0 0 -7px;border:1.5px solid var(--color-bg);border-radius:50%;transition:left .5s linear, top .5s linear;box-shadow:0 0 0 4px color-mix(in srgb, var(--color-bg) 12%, transparent), 0 0 0 1px oklch(0.07 0.03 258);"></div>
+          {{ cursorFish }}
           <div style="position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 12px;padding:14px 10px 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-300);background:linear-gradient(to bottom, transparent, oklch(0.07 0.03 258 / .88) 55%);pointer-events:none;"><span>{{ retinaLabel }}</span><span>{{ cursorLabel }}</span></div>
         </div>
       </div>
@@ -194,6 +194,7 @@
 <script type="text/x-dc" data-dc-script="">
 class Component extends DCLogic {
   cvRef = React.createRef();
+  curRef = React.createRef();
   // Everything shown comes from the roamer's heartbeat (roam.py). When
   // nothing answers, the page says so — it never invents a number.
   LIVE_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:4660' : 'https://live.zfbrain.online';
@@ -460,7 +461,27 @@ class Component extends DCLogic {
     const r = cv.parentElement.getBoundingClientRect();
     cv.width = Math.max(1, Math.floor(r.width * devicePixelRatio)); cv.height = Math.max(1, Math.floor(r.height * devicePixelRatio));
   }
+  // The cursor marker rides the animation loop, not React: the feed reports a
+  // position several times a second and this eases toward it every frame, so
+  // the fish glides and banks into its turns.
+  swimCursor() {
+    const el = this.curRef.current, f = this.state.feed;
+    if (!el || !f || !f.cursor || !this.isLive()) return;
+    const box = el.parentElement && el.parentElement.getBoundingClientRect();
+    if (!box || !box.width) return;
+    const tx = f.cursor.x * box.width, ty = f.cursor.y * box.height;
+    const C = this._cur || (this._cur = { x: tx, y: ty, a: 0 });
+    C.x += (tx - C.x) * 0.16; C.y += (ty - C.y) * 0.16;
+    const vx = tx - C.x, vy = ty - C.y;
+    if (Math.hypot(vx, vy) > 0.4) {                      // only turn when moving
+      const want = Math.atan2(vy, vx) * 180 / Math.PI;
+      C.a += ((want - C.a + 540) % 360 - 180) * 0.12;    // shortest way round
+    }
+    el.style.transform = 'translate(' + (C.x - 15).toFixed(1) + 'px,' + (C.y - 6).toFixed(1) +
+                         'px) rotate(' + C.a.toFixed(1) + 'deg)';
+  }
   draw() {
+    this.swimCursor();
     const cv = this.cvRef.current;
     if (cv) {
       if (this.G === undefined) this.G = this.initGL(cv);
@@ -570,6 +591,19 @@ class Component extends DCLogic {
       retinaCells: showRetina ? retina.lum.map((v) => ({ o: Math.min(1, 0.06 + v * 0.94).toFixed(3) })) : [],
       asleepDisplay: live ? 'none' : 'flex',
       asleepText: s.mode === 'connecting' ? 'connecting to the fish…' : 'the fish is not running right now',
+      // the fish's cursor: a fish. draw() eases it toward the reported point
+      // every animation frame and turns it to face the way it is swimming, so
+      // it glides instead of stepping once per thought.
+      cursorFish: React.createElement('svg', {
+        ref: this.curRef, viewBox: '-7 0 31 12', width: 30, height: 12, 'aria-hidden': true,
+        style: { position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none',
+                 display: live ? 'block' : 'none', willChange: 'transform',
+                 filter: 'drop-shadow(0 0 3px oklch(0.07 0.03 258)) drop-shadow(0 0 1px oklch(0.07 0.03 258))' } },
+        React.createElement('path', { key: 'b', d: 'M22 6 C18 1.6 10 1.6 4.5 6 C10 10.4 18 10.4 22 6 Z',
+          fill: 'var(--color-bg)', stroke: 'oklch(0.07 0.03 258)', strokeWidth: 1, strokeLinejoin: 'round' }),
+        React.createElement('path', { key: 't', d: 'M5.5 6 L-2 2.2 L-0.6 6 L-2 9.8 Z',
+          fill: 'var(--color-bg)', stroke: 'oklch(0.07 0.03 258)', strokeWidth: 1, strokeLinejoin: 'round' }),
+        React.createElement('circle', { key: 'e', cx: 18.2, cy: 5.1, r: 0.95, fill: 'oklch(0.07 0.03 258)' })),
       cursorDisplay: live ? 'block' : 'none',
       cursorX: (cx * 100).toFixed(2) + '%', cursorY: (cy * 100).toFixed(2) + '%',
       cursorLabel: live && f.cursor ? 'cursor ' + Math.round(cx * 1280) + ' · ' + Math.round(cy * 800) : '',

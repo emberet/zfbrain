@@ -88,6 +88,7 @@ SIM_STEPS = 400                   # 400 x 0.5 ms = 0.2 s of biological time per 
 # between slices of the brain step, and /frame.mjpg streams it as video.
 CAM_FPS = float(os.environ.get("ZF_CAM_FPS", "6"))
 CAM_SLICE = 25                    # brain steps between camera checks (~12 ms of thought)
+SEC_PER_THOUGHT = 1.0             # how long a heading is swum out over, wall-clock
 DEFAULT_ORIGINS = ("https://zfbrain.online,https://www.zfbrain.online,"
                    "https://zfbrain.pages.dev,http://localhost:8787")
 
@@ -184,6 +185,8 @@ class Roamer:
         self._last_file_write = 0.0
         self._cam_at = 0.0         # camera clock, independent of the brain's
         self._cam_page = None      # the page the camera is pointed at
+        self._heading = (0.0, 0.0) # the direction the last thought chose
+        self._last = None          # (detail, dec, out) so a camera tick can republish
         self._chain = {"network": "mainnet", "slot": None, "at": 0.0}
         self.graph_doc = self._graph_doc()
         threading.Thread(target=self._chain_loop, daemon=True).start()
@@ -405,9 +408,22 @@ class Roamer:
         self.feed.publish_frame(buf.getvalue())
         self._cam_at = time.time()
 
+    def _swim(self, page, frac):
+        """Move the cursor a fraction of the way along the heading the last
+        thought chose. A fish glides; it does not teleport once a second, and
+        neither should the thing the site draws as one."""
+        dx, dy = self._heading
+        ox, oy = self._cursor
+        cx = min(VIEW_W - 1, max(0, ox + dx * 200 * frac - (ox - VIEW_W / 2) * 0.02 * frac))
+        cy = min(VIEW_H - 1, max(0, oy + dy * 200 * frac - (oy - VIEW_H / 2) * 0.02 * frac))
+        if abs(cx - ox) >= 1 or abs(cy - oy) >= 1:
+            page.mouse.move(int(cx), int(cy))
+        self._cursor = (cx, cy)
+
     def _camera_tick(self):
-        """Called between slices of a brain step: if the camera is due, take a
-        frame. This is what makes the live panel play like video instead of
+        """Called between slices of a brain step: if the camera is due, swim the
+        cursor on and take a frame. This is what makes the live panel play like
+        video, and the cursor move like something alive, instead of both
         advancing once per thought."""
         page = self._cam_page
         if page is None or CAM_FPS <= 0:
@@ -415,7 +431,12 @@ class Roamer:
         if time.time() - self._cam_at < 1.0 / CAM_FPS:
             return
         try:
+            self._swim(page, 1.0 / max(1.0, CAM_FPS * SEC_PER_THOUGHT))
             self._publish_frame(self._shoot(page))
+            # republish the heartbeat so the page sees the cursor at camera
+            # rate; the brain fields are the last window's and unchanged
+            if self._last is not None:
+                self.feed.publish(self.heartbeat(*self._last))
         except Exception:  # noqa: BLE001 — a dropped frame must not end a life
             self._cam_at = time.time()
 
@@ -437,13 +458,11 @@ class Roamer:
         self.stats["brain_steps"] += SIM_STEPS
         self._note_page(page)
 
-        # steering -> the cursor drifts with the DSGC asymmetry, like a heading,
-        # with a slow pull back to the middle of the field
-        ox, oy = self._cursor
-        cx = int(min(VIEW_W - 1, max(0, ox + dec["dx"] * 200 - (ox - VIEW_W / 2) * 0.02)))
-        cy = int(min(VIEW_H - 1, max(0, oy + dec["dy"] * 200 - (oy - VIEW_H / 2) * 0.02)))
-        page.mouse.move(cx, cy)
-        self._cursor = (cx, cy)
+        # steering -> a heading the cursor swims along until the next thought,
+        # rather than a jump to a new point once a second (see _swim)
+        self._heading = (dec["dx"], dec["dy"])
+        self._swim(page, 1.0)
+        cx, cy = (int(v) for v in self._cursor)
         # nMLF bout -> scroll burst
         moved = False
         if self._bout_cool:
@@ -552,6 +571,7 @@ class Roamer:
             mask = detail["firing_bits"]
             self._mask_seq += 1
             self._mask_at = now
+        self._last = (detail, dec, out)
         state = self.heartbeat(detail, dec, out)
         self.feed.publish(state, mask)
         if time.time() - self._last_file_write >= 1.0:
@@ -781,7 +801,9 @@ def make_handler(roamer):
                         seen = state["seq"]
                         self.wfile.write(b"data: " + json.dumps(state).encode() + b"\n\n")
                     self.wfile.flush()
-                    time.sleep(max(0.0, 0.5 - (time.time() - t0)))  # <= 2 Hz per client
+                    # the cursor rides the heartbeat, so this has to keep up
+                    # with the camera rather than the brain
+                    time.sleep(max(0.0, 1.0 / max(1.0, CAM_FPS) - (time.time() - t0)))
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
