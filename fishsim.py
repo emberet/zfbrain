@@ -31,7 +31,6 @@ Usage:
 """
 
 import argparse
-import base64
 import json
 import os
 import time
@@ -59,8 +58,12 @@ DT = 0.0005
 EPSP = 4.0  # mV delivered to a post target by one spike over the strongest synapse (count 6)
 FLASH_STEPS = 10  # "fired this step" on the site = spiked within the last 5 ms
 ESCAPE_HZ = float(os.environ.get("ZF_ESCAPE_HZ", "30"))  # Mauthner rate that counts as a startle
-NMLF_REST, NMLF_SPAN = 30.0, 40.0   # a bout = nMLF this far above its resting rate
-VSPN_REST, VSPN_SPAN = 30.0, 30.0   # a turn = vSPN this far above its resting rate
+# A bout is nMLF rising above its own resting rate. How far above cannot be a
+# fixed number of Hz: the resting rate depends on the graph (3 Hz here, 30 Hz
+# on the small one), so the span scales with it, with a floor so a nearly
+# silent population still needs a real excursion.
+NMLF_REST, VSPN_REST = 30.0, 30.0   # fallbacks when the roamer has no baseline yet
+SPAN_FACTOR, MIN_SPAN = 1.5, 8.0
 # habituation: short-term depression on sensory-input synapses
 DEP_U = float(os.environ.get("ZF_DEP_U", "0.002"))      # resource used per presynaptic spike
 DEP_TAU = float(os.environ.get("ZF_DEP_TAU", "20.0"))   # seconds to recover
@@ -68,10 +71,27 @@ PLASTIC_GROUPS = ("retina", "dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right")
 
 
 def load_graph(graph_path, groups_path):
+    """Load a graph. A synthetic one is regenerated from its recipe in memory
+    (a pure function of n and seed, seconds to build, no 450 MB file); a real
+    EM export is read from the npz build_graph wrote."""
+    meta_path = Path(graph_path).with_name("graph.meta.json")
+    recipe_path = Path(graph_path).with_name("graph.recipe.json")
+    if recipe_path.exists():
+        import build_graph
+
+        r = json.loads(recipe_path.read_text())
+        ids, coords, types, pre, post, w, groups = build_graph.synthetic_graph(
+            r["n"], r.get("seed", 7), r.get("target_fanin"))
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        meta.setdefault("label", "synthetic graph")
+        meta.setdefault("neurons", int(len(ids)))
+        meta.setdefault("synapses", int(len(pre)))
+        return {"meta": meta, "root_ids": ids, "coords": coords, "types": types,
+                "pre": pre, "post": post, "w": w,
+                "groups": {k: np.asarray(v, dtype=np.int64) for k, v in groups.items()}}
     npz = np.load(graph_path)
     groups_path = Path(groups_path)
     groups = json.loads(groups_path.read_text()) if groups_path.exists() else {}
-    meta_path = Path(graph_path).with_name("graph.meta.json")
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
     meta.setdefault("label", "unknown graph")
     meta.setdefault("neurons", int(len(npz["coords"])))
@@ -283,7 +303,9 @@ class FishSim:
         rates = {g: rate(g) for g in self.groups}
         recent = self.last_spike >= self.step_i - FLASH_STEPS
         return {
-            "firing_mask": base64.b64encode(np.packbits(recent).tobytes()).decode("ascii"),
+            # packed bits, one per neuron — 23 KB at whole-brain scale, so it
+            # travels as bytes on /firing.bin, never inside the heartbeat JSON
+            "firing_bits": np.packbits(recent).tobytes(),
             "firing_recent": int(recent.sum()),
             "t": round(self.t, 3),
             "neurons": int(self.n),
@@ -306,6 +328,8 @@ class FishSim:
         rest = rest or {}
         nmlf_rest = rest.get("nmlf", NMLF_REST)
         vspn_rest = rest.get("vspn", VSPN_REST)
+        nmlf_span = max(MIN_SPAN, SPAN_FACTOR * nmlf_rest)
+        vspn_span = max(MIN_SPAN, SPAN_FACTOR * vspn_rest)
         out = {"dx": 0.0, "dy": 0.0, "scroll": 0.0, "turn": 0.0, "escape": False}
 
         # a fish steers by asymmetry: the difference between opposed DSGC
@@ -317,10 +341,10 @@ class FishSim:
         strongest = max(up, dn, lf, rt)
 
         # nMLF bout gate -> a scroll burst when the population rises above rest
-        out["scroll"] = float(np.clip((rates.get("nmlf", 0.0) - nmlf_rest) / NMLF_SPAN, 0.0, 1.0))
+        out["scroll"] = float(np.clip((rates.get("nmlf", 0.0) - nmlf_rest) / nmlf_span, 0.0, 1.0))
 
         # vSPN above rest -> a turn, signed against the DSGC winner
-        out["turn"] = float(np.clip((rates.get("vspn", 0.0) - vspn_rest) / VSPN_SPAN, 0.0, 1.0)) * (-1 if strongest else 1)
+        out["turn"] = float(np.clip((rates.get("vspn", 0.0) - vspn_rest) / vspn_span, 0.0, 1.0)) * (-1 if strongest else 1)
 
         # Mauthner: an escape is all-or-nothing and fast — a startle is a burst,
         # not the odd coincidence spike a cell with hundreds of inputs throws
@@ -347,12 +371,23 @@ def smoke(graph_path="build/graph.npz", groups_path="build/groups.json"):
     graph = load_graph(graph_path, groups_path)
     label = graph["meta"].get("label", "graph")
     real = graph["meta"].get("source") != "smoke"
+    ds = ("dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right")
+
+    def page_drive(sim, lum=40.0, flow=40.0):
+        """What Retina.rates hands set_drive on an ordinary page: a luminance
+        drive to the retina and an optic-flow drive to each motion channel."""
+        sim.set_drive(graph["groups"]["retina"], lum)
+        for g in ds:
+            sim.set_drive(graph["groups"][g], flow)
+
     sim = FishSim(graph)
-    sim.set_drive(graph["groups"]["retina"], 40.0)  # what a white page drives, roughly
+    page_drive(sim, flow=0.0)          # a page the fish is not moving
     for _ in range(12):
         d1 = sim.run(400)  # let the recurrent pools and the depression settle
     r1 = d1["rates_hz"]
-    dead = [g for g in NEED if r1.get(g, 0.0) <= 0.0]
+    # the Mauthner cell is meant to be silent between escapes — a larva's M-cell
+    # fires once for a startle, not continuously; every other population lives
+    dead = [g for g in NEED if g != "mauthner" and r1.get(g, 0.0) <= 0.0]
     hot = [g for g in NEED if r1.get(g, 0.0) >= 350.0]
     print(f"[{label}] rest rates:", {g: r1[g] for g in NEED}, f"habituation {d1['habituation']:.3f}")
     if real:
@@ -365,27 +400,21 @@ def smoke(graph_path="build/graph.npz", groups_path="build/groups.json"):
     print("rest decode OK:", {k: round(v, 2) if isinstance(v, float) else v for k, v in rest.items()})
 
     sim2 = FishSim(graph, seed=5)
-    sim2.set_drive(graph["groups"]["retina"], 40.0)
+    page_drive(sim2, flow=0.0)
     sim2.set_drive(graph["groups"]["dsgc_right"], 120.0)
     dec = sim2.decode(sim2.run(400)["rates_hz"])
     assert dec["dx"] > 0, f"rightward input should steer right, got {dec}"
     print("steer OK:", {k: round(v, 2) if isinstance(v, float) else v for k, v in dec.items()})
 
-    ds = ("dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right")
-
     def flash(sim):
         # a flash = a luminance jump (retina) plus one frame of whole-field motion
-        sim.set_drive(graph["groups"]["retina"], 400.0)
-        for g in ds:
-            sim.set_drive(graph["groups"][g], 200.0)
+        page_drive(sim, 400.0, 200.0)
         m = sim.run(200)["rates_hz"].get("mauthner", 0.0)
-        sim.set_drive(graph["groups"]["retina"], 40.0)
-        for g in ds:
-            sim.set_drive(graph["groups"][g], 0.0)
+        page_drive(sim, flow=0.0)
         return m
 
     sim3 = FishSim(graph, seed=3)
-    sim3.set_drive(graph["groups"]["retina"], 40.0)
+    page_drive(sim3, flow=0.0)
     for _ in range(12):
         base = sim3.run(400)["rates_hz"].get("mauthner", 0.0)
     train = []
@@ -442,7 +471,7 @@ def main():
     for side in ("right", "up"):
         sim.set_drive(graph["groups"].get(f"dsgc_{side}", []), 100.0)
     d = sim.run(args.steps)
-    print(json.dumps({k: v for k, v in d.items() if k != "firing_mask"}, indent=2))
+    print(json.dumps({k: v for k, v in d.items() if k != "firing_bits"}, indent=2))
     print("decode:", sim.decode(d["rates_hz"]))
     smoke(args.graph, args.groups)
 

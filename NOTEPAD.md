@@ -37,10 +37,15 @@ the Dec-2027 paper embargo; Fish-X has the retina in the volume.)
       `build/groups.json` + `build/graph.meta.json`; printout sanity-checked
       (edge counts, E/I split). The site header reads the meta file — the
       moment this runs, zfbrain.online stops saying "synthetic graph".
-- [x] Until then: `build_graph.py --synthetic` — 7,000 neurons on the larva
-      silhouette (same sampler as the site's hero), all nine populations
-      wired and firing; `/graph` serves the layout so every dot is a neuron
-      (2026-09-11).
+- [x] Until then: `build_graph.py --synthetic` — **187,053 neurons / ~39M
+      synapses**, the larva's own counts, on the silhouette (same sampler as
+      the site's hero), ~208 synapses per neuron, all nine populations wired
+      and firing; stored as a 76-byte recipe and rebuilt in memory (3.4 s),
+      weight scale from `calibrate.py` (2026-09-11).
+- [ ] It runs hot: real pages drive it near the top of its stable band (~1/3
+      of neurons lit, spinal 150-200 Hz, escapes more often than bouts). The
+      fix is either the real connectome's structure or a homeostatic brake —
+      shipped the honest number rather than invent a stabiliser.
 - [ ] Wire the readout groups exactly: retina, dsgc_up/down/left/right, nmlf,
       vspn, mauthner, spinal. Missing groups = a hard error in roam.py.
 - [ ] Fishbrain-style held-out check: a small "spiral test" proving

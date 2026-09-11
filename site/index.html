@@ -303,13 +303,25 @@ class Component extends DCLogic {
     }
     return st;
   }
-  // firing_mask: one bit per neuron (numpy packbits, MSB first), base64 -> 0/1 bytes
-  unpackMask(feed, n) {
-    if (!feed || !feed.brain || !feed.brain.firing_mask) return null;
-    if (this._maskSeq === feed.seq) return null;  // already applied
-    const bin = atob(feed.brain.firing_mask), lit = this._lit && this._lit.length === n ? this._lit : new Uint8Array(n);
-    for (let i = 0; i < n; i++) { const b = bin.charCodeAt(i >> 3); lit[i] = (b >> (7 - (i & 7))) & 1; }
-    this._maskSeq = feed.seq; this._lit = lit; return lit;
+  // /firing.bin is one bit per neuron (numpy packbits, MSB first) — 23 KB at
+  // whole-brain scale, fetched when the heartbeat says the seq changed, the
+  // same swap-on-change the frame image uses. Unpacked into 0/1 bytes for the
+  // WebGL attribute.
+  pullMask(feed, n) {
+    if (!feed || !feed.brain || feed.brain.firing_seq == null) return;
+    const seq = feed.brain.firing_seq;
+    if (seq === this._maskSeq || this._maskPending === seq) return;
+    this._maskPending = seq;
+    fetch(this.LIVE_BASE + '/firing.bin?seq=' + seq)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(buf => {
+        const bits = new Uint8Array(buf);
+        const lit = this._lit && this._lit.length === n ? this._lit : new Uint8Array(n);
+        for (let i = 0; i < n; i++) lit[i] = (bits[i >> 3] >> (7 - (i & 7))) & 1;
+        this._maskSeq = seq; this._lit = lit; this._litDirty = true;
+      })
+      .catch(() => {})
+      .finally(() => { if (this._maskPending === seq) this._maskPending = null; });
   }
   initGL(cv) {
     const gl = cv.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: false });
@@ -317,25 +329,26 @@ class Component extends DCLogic {
     const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.warn('[hero]', gl.getShaderInfoLog(s)); return null; } return s; };
     const vs = mk(gl.VERTEX_SHADER, `
       attribute vec2 aPos; attribute float aStyle; attribute float aLit;
-      uniform vec2 uSize; uniform vec2 uOrigin; uniform float uScale, uTime, uLive, uDpr;
+      uniform vec2 uSize; uniform vec2 uOrigin; uniform float uScale, uTime, uLive, uDpr, uLitSize;
       varying float vStyle, vLit;
       void main() {
         float sway = uLive * sin(uTime * 2.4 - aPos.x * 4.5) * 0.035 * aPos.x * aPos.x;
         vec2 p = uOrigin + vec2(aPos.x, aPos.y + sway) * uScale;
         gl_Position = vec4(p.x / uSize.x * 2.0 - 1.0, 1.0 - p.y / uSize.y * 2.0, 0.0, 1.0);
         vStyle = aStyle; vLit = aLit;
-        gl_PointSize = (aLit > 0.5 ? 2.4 : (aStyle == 5.0 ? 1.5 : 1.15)) * uDpr;
+        gl_PointSize = (aLit > 0.5 ? uLitSize : 1.0) * uDpr;
       }`);
     const fs = mk(gl.FRAGMENT_SHADER, `
-      precision mediump float; varying float vStyle, vLit; uniform vec3 uPaper, uBlue;
+      precision mediump float; varying float vStyle, vLit; uniform vec3 uPaper, uBlue; uniform float uDim, uLitA;
       void main() {
         vec3 c = uPaper; float a = 0.24;
-        if (vLit > 0.5) a = 1.0;
-        else if (vStyle == 5.0) a = 0.95;
-        else if (vStyle == 1.0) { c = uBlue; a = 1.0; }
-        else if (vStyle == 4.0) { c = uBlue; a = 0.6; }
-        else if (vStyle == 2.0) a = 0.2;
-        else if (vStyle == 3.0) a = 0.18;
+        if (vLit > 0.5) a = uLitA;
+        else if (vStyle == 5.0) a = 0.95 * uDim;
+        else if (vStyle == 1.0) { c = uBlue; a = 1.0 * uDim; }
+        else if (vStyle == 4.0) { c = uBlue; a = 0.6 * uDim; }
+        else if (vStyle == 2.0) a = 0.2 * uDim;
+        else if (vStyle == 3.0) a = 0.18 * uDim;
+        else a = 0.24 * uDim;
         gl_FragColor = vec4(c, a);
       }`);
     if (!vs || !fs) return null;
@@ -345,7 +358,7 @@ class Component extends DCLogic {
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     const a = (name) => gl.getAttribLocation(prog, name), u = (name) => gl.getUniformLocation(prog, name);
     return { gl, prog, n: 0, aPos: a('aPos'), aStyle: a('aStyle'), aLit: a('aLit'),
-      uSize: u('uSize'), uOrigin: u('uOrigin'), uScale: u('uScale'), uTime: u('uTime'), uLive: u('uLive'), uDpr: u('uDpr'), uPaper: u('uPaper'), uBlue: u('uBlue'),
+      uSize: u('uSize'), uOrigin: u('uOrigin'), uScale: u('uScale'), uTime: u('uTime'), uLive: u('uLive'), uDpr: u('uDpr'), uPaper: u('uPaper'), uBlue: u('uBlue'), uDim: u('uDim'), uLitA: u('uLitA'), uLitSize: u('uLitSize'),
       bPos: gl.createBuffer(), bStyle: gl.createBuffer(), bLit: gl.createBuffer() };
   }
   glUpload(G, xy, styles) {
@@ -389,20 +402,29 @@ class Component extends DCLogic {
         if (brain && brain.pending) { this.glUpload(G, brain.xy, brain.styles); brain.pending = false; this._maskSeq = -1; }
         else if (!brain && G.n === 0) { const s = this.silhouettePoints(); this.glUpload(G, s.xy, s.styles); }
         if (brain && live) {
-          const lit = this.unpackMask(f, brain.n);
-          if (lit) { gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, lit); G.litZero = false; }
-        } else if (!G.litZero) { gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Uint8Array(G.n)); G.litZero = true; }
+          this.pullMask(f, brain.n);
+          if (this._litDirty && this._lit && this._lit.length === G.n) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._lit);
+            this._litDirty = false; G.litZero = false;
+          }
+        } else if (!G.litZero) { gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Uint8Array(G.n)); G.litZero = true; this._maskSeq = -1; }
         const rgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
         gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
         gl.uniform2f(G.uSize, W, H); gl.uniform2f(G.uOrigin, ox, oy); gl.uniform1f(G.uScale, scale);
         gl.uniform1f(G.uTime, now); gl.uniform1f(G.uLive, live ? 1 : 0); gl.uniform1f(G.uDpr, d);
         gl.uniform3fv(G.uPaper, rgb(paper.length === 7 ? paper : '#f2f2f3')); gl.uniform3fv(G.uBlue, rgb(blue.length === 7 ? blue : '#b5d9fd'));
+        // 187,000 dots in one silhouette would read as a solid block: fade the
+        // resting ones as the brain gets bigger so the firing ones carry it
+        gl.uniform1f(G.uDim, Math.min(1, Math.max(0.22, 26000 / Math.max(1, G.n))));
+        gl.uniform1f(G.uLitA, Math.min(1, Math.max(0.5, 70000 / Math.max(1, G.n))));
+        gl.uniform1f(G.uLitSize, G.n > 50000 ? 1.0 : 2.0);
         gl.drawArrays(gl.POINTS, 0, G.n);
       } else {
         // no WebGL: the same picture with fillRect (fine for thousands, slow for a whole brain)
         const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, W, H);
         const src = brain ? brain : this.silhouettePoints(); const n = brain ? brain.n : this.pts.length;
-        const lit = brain && live ? (this.unpackMask(f, n) || this._lit) : null;
+        if (brain && live) this.pullMask(f, n);
+        const lit = brain && live ? this._lit : null;
         for (let i = 0; i < n; i++) {
           const x = src.xy[2 * i], y = src.xy[2 * i + 1], st = src.styles[i];
           const sway = live ? Math.sin(now * 2.4 - x * 4.5) * 0.035 * x * x : 0;
@@ -495,7 +517,8 @@ class Component extends DCLogic {
       plan,
       chain: [['Contract',dash],['Paired',dash],['Creator tax','1% · transfer-fee extension'],['Supply','1,000,000,000 fixed'],['Chain','Solana · Token-2022'],['Venue','pump.fun → Raydium']].map(([k,v]) => ({k,v})),
       honest: [
-        { lead: 'The neurons are synthetic until the real connectome lands.', body: 'What runs today is a 7,000-neuron synthetic brain shaped like the larva — retina, DSGCs, nMLF, vSPN, the Mauthner pair, an integrator pool and a spinal cord, all wired and all firing. Every dot above is one of them. The header always names the graph that is actually running; the whole-brain EM reconstruction (187,053 cells, 39 million synapses) is the next step and NOTEPAD.md tracks it.' },
+        { lead: 'The counts are the larva’s. The wiring is not.', body: 'A real 7-day-old zebrafish has 187,053 cell bodies and about 39 million synapses — those are the numbers in the header, and there are that many neurons running above, each one a leaky integrate-and-fire unit with ~208 synapses, laid out in the shape of the larva. But the graph is synthetic: the electron-microscope reconstruction is still being proofread and we do not have it yet. The header will say whose connectome it is the day that export is in. NOTEPAD.md tracks it.' },
+        { lead: 'It runs hot.', body: 'A randomly wired brain this size has a very narrow band between silent and saturated — a real connectome’s structure is what normally keeps it there. Ours sits near the top of that band: a third of the neurons fire in any 5 ms window, the spinal cord runs harder than a larva’s would, and the fish startles more often than it swims. The alternative was to invent a stabiliser, and we would rather show you the honest number.' },
         { lead: 'The only learning is habituation.', body: 'Short-term synaptic depression on the sensory inputs — the real larval kind: every spike uses a little synaptic resource, it recovers over ~20 s. A held flash stops startling the Mauthner cell, a page stared at for a minute drives the brain less. No reward signal is invented; the habituation row above is that resource, used.' },
         { lead: 'The feed is live only while the fish is running.', body: 'What you see above is streamed from one machine running roam.py. When it is off, this page says asleep; it never replays or invents telemetry.' },
         { lead: 'The words are a narrator.', body: 'The fish has no language. Posts are written by a language model handed real telemetry and live chain numbers; a draft whose numbers are not in that packet is thrown away.' },

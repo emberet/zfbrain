@@ -13,8 +13,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python -m playwright install chromium
 
-python build_graph.py --synthetic # 7,000-neuron fish-shaped synthetic brain (the stand-in)
-python fishsim.py                 # the brain, no browser: every population fires, startle check
+python build_graph.py --synthetic # 187,053 neurons / ~39M synapses, the larva's own counts
+python calibrate.py               # find the weight scale that keeps it in band
+python fishsim.py                 # the brain, no browser: rates, startle, habituation
 
 # wallet (Ed25519 / Solana; prints the address only, NEVER the seed)
 python solkeygen.py
@@ -84,15 +85,21 @@ directly.
 
 ## The honest bit (stated up front)
 
-- The **neurons are synthetic until the real connectome lands.** What runs
-  today is `build_graph.py --synthetic`: 7,000 LIF neurons laid out in the
-  shape of the larva — retina, four DSGC channels, nMLF, vSPN, the Mauthner
-  pair, a hindbrain integrator pool and a spinal cord — ~59,000 signed
-  synapses, every population firing. Every dot on the site's fish is one of
-  them. The target is the Harvard/Google 7 dpf whole-brain EM reconstruction
-  (187,053 cells, 39 M synapses, 21 M with polarity); `fetch_cave.py` pulls
-  it, the simulator already runs at that scale (`fishsim.py --bench 180000`),
-  and the header will name it the day it is in.
+- **The counts are the larva's; the wiring is not.** A real 7 dpf zebrafish
+  has **187,053 cell bodies and ~39 M synapses**, and that is what runs:
+  `build_graph.py --synthetic` lays that many LIF neurons out in the shape of
+  the larva, ~208 synapses each — retina, four motion channels, nMLF, vSPN,
+  the Mauthner pair (exactly two, as in a real fish), a hindbrain integrator
+  pool and a spinal cord. The *graph* is synthetic. The Harvard/Google 7 dpf
+  EM reconstruction (187,053 cells, 39 M synapses, 21 M with polarity) is the
+  target; `fetch_cave.py` pulls it once access is granted, and the header will
+  name it the day it is in.
+- **It runs hot.** A randomly wired graph this size has a narrow band between
+  silence and saturation — `calibrate.py` finds it (silent at a weight scale
+  of 0.030, saturated at 0.055), but real pages drive it near the top: about a
+  third of neurons fire in any 5 ms window and the fish startles more than it
+  swims. Structure is what keeps a real brain in band, and we do not have the
+  real structure yet.
 - The **only learning is habituation**: short-term synaptic depression on the
   sensory inputs, the real larval kind. A held flash stops startling the
   Mauthner cell; a page stared at for a minute drives the brain less. No
@@ -114,7 +121,9 @@ directly.
 ## The brain (all real, all locally run)
 
 ```
-build_graph.py   graph.npz + groups.json + graph.meta.json (--synthetic today, --smoke for tests)
+build_graph.py   the graph (--synthetic today, --smoke for tests); a synthetic
+                 one is a 76-byte recipe, rebuilt in memory in seconds
+calibrate.py     bisects the one number EM cannot give you: synapses -> mV
 fishsim.py       LIF whole-graph simulator; behavior readouts + tests
 retina.py        luminance + optic-flow retina
 roam.py          the roaming browser (allowlist, veto) + the live feed server
@@ -137,8 +146,8 @@ voice.py         the narrator (observe -> read -> draft -> number-check -> post)
 
 ## What is NOT real, stated plainly
 
-- Not Fish1 yet: a 7,000-neuron synthetic brain shaped like the larva, wired
-  by hand from the circuits the release paper dissected.
+- Not a real connectome: the neuron and synapse counts are the larva's, the
+  graph is synthetic, and it runs hotter than a larva does.
 - Not live when this machine is off.
 - Not the platform's own project, not affiliated with Fish1's authors or any
   exchange.

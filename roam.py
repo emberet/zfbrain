@@ -14,6 +14,7 @@ Everything the fish just did is published, in-process, on 127.0.0.1:4660:
     GET /events     the same heartbeat as a Server-Sent-Events stream (~2 Hz)
     GET /graph      the running graph: counts, populations, where the layout is
     GET /graph.bin  every neuron's position + population, binary (once per page load)
+    GET /firing.bin?seq=N  which neurons fired in the last 5 ms, one bit each
     GET /healthz    200 while the process is up
 
 bin/tunnel.sh puts that behind https://live.zfbrain.online; the site
@@ -90,14 +91,19 @@ class Feed:
         self.state = {"v": 2, "status": "starting", "seq": 0, "ts": time.time()}
         self.frame = b""
         self.frame_seq = 0
+        self.mask = b""          # packed firing bits, one per neuron
+        self.mask_seq = 0
         self.sse_clients = 0
 
-    def publish(self, state, frame=None):
+    def publish(self, state, frame=None, mask=None):
         with self.cond:
             self.state = state
             if frame is not None:
                 self.frame = frame
                 self.frame_seq = state["frame"]["seq"]
+            if mask is not None:
+                self.mask = mask
+                self.mask_seq = state["brain"]["firing_seq"]
             self.cond.notify_all()
 
     def wait_for_new(self, seen_seq, timeout):
@@ -109,6 +115,10 @@ class Feed:
     def snapshot(self):
         with self.lock:
             return self.state, self.frame, self.frame_seq
+
+    def mask_snapshot(self):
+        with self.lock:
+            return self.mask, self.mask_seq
 
 
 class Roamer:
@@ -127,6 +137,8 @@ class Roamer:
         self.events = deque(maxlen=12)
         self.feed = Feed()
         self._seq = 0
+        self._mask_seq = 0
+        self._mask_at = 0.0
         self._life = 0
         self._quiet_turns = 0
         self._cursor = (VIEW_W // 2, VIEW_H // 2)
@@ -361,9 +373,9 @@ class Roamer:
                 "spikes_per_sec": detail["spikes_per_sec"],
                 "mean_membrane_mv": detail["mean_membrane_mv"],
                 "firing": detail["firing_recent"],          # spiked in the last 5 ms
+                "firing_seq": self._mask_seq,               # which /firing.bin these bits are
                 "habituation": detail["habituation"],       # sensory synaptic resource used, 0-1
                 "rates_hz": detail["rates_hz"],
-                "firing_mask": detail["firing_mask"],       # one bit per neuron, base64
             }
         return state
 
@@ -371,8 +383,16 @@ class Roamer:
         small = img.resize((FRAME_W, FRAME_H), Image.BILINEAR)
         buf = io.BytesIO()
         small.save(buf, "JPEG", quality=60, optimize=True)
+        # the firing bits are 23 KB at whole-brain scale: publish at most 1 Hz,
+        # and as bytes on their own route — the hero cannot show more anyway
+        mask = None
+        now = time.time()
+        if detail is not None and now - self._mask_at >= 1.0:
+            mask = detail["firing_bits"]
+            self._mask_seq += 1
+            self._mask_at = now
         state = self.heartbeat(detail, dec, out)
-        self.feed.publish(state, buf.getvalue())
+        self.feed.publish(state, buf.getvalue(), mask)
         if time.time() - self._last_file_write >= 1.0:
             self._write_state(state)
 
@@ -486,6 +506,14 @@ def make_handler(roamer):
                 self._send(200, roamer.graph_doc, "application/json",
                            cache="public, max-age=300",
                            extra=[("ETag", f'"{roamer.meta.get("built_at", "0")}"')])
+            elif path == "/firing.bin":
+                mask, seq = feed.mask_snapshot()
+                if not mask:
+                    self._send(404, b"no firing mask yet", "text/plain")
+                    return
+                cache = "public, max-age=60" if "?" in self.path else "no-store"
+                self._send(200, mask, "application/octet-stream", cache=cache,
+                           extra=[("ETag", f'"{seq}"')])
             elif path == "/graph.bin":
                 self._send(200, roamer.graph_bin, "application/octet-stream",
                            cache="public, max-age=86400",
@@ -549,7 +577,7 @@ def serve(roamer):
     port = int(os.environ.get("ZF_ROAM_PORT", "4660"))
     server = ThreadingHTTPServer((host, port), make_handler(roamer))
     server.daemon_threads = True
-    print(f"feed on http://{host}:{port}  (/state /frame.jpg /events /graph /healthz)")
+    print(f"feed on http://{host}:{port}  (/state /frame.jpg /firing.bin /events /graph /healthz)")
     server.serve_forever()
 
 

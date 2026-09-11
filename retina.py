@@ -23,7 +23,7 @@ import numpy as np
 
 
 class Retina:
-    def __init__(self, rows=12, cols=18, gain=100.0, flow_shift=3, motion_max=80.0):
+    def __init__(self, rows=12, cols=18, gain=100.0, flow_shift=3, motion_max=25.0):
         self.rows = rows
         self.cols = cols
         self.gain = gain
