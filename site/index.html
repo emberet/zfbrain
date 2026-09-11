@@ -200,7 +200,6 @@ class Component extends DCLogic {
   STALE_MS = 15000;
   state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, stream: true, view: 'page', copied: false, now: Date.now() };
   componentDidMount() {
-    this.buildFish();
     this.raf = requestAnimationFrame(() => this.draw());
     this.ro = new ResizeObserver(() => this.resize());
     if (this.cvRef.current) this.ro.observe(this.cvRef.current.parentElement);
@@ -239,45 +238,14 @@ class Component extends DCLogic {
     this.setState(upd);
   }
   isLive() { return this.state.mode === 'live' && this.state.now - this.state.lastSeen < this.STALE_MS; }
-  // Adult zebrafish, lateral view, head left. Coordinates: x 0..1 along the fish, y up negative. Body occupies x 0..0.80, caudal fin 0.80..1.
-  profile(x) {
-    const u = Math.min(1, x / 0.8), s = Math.pow(Math.sin(Math.PI * Math.pow(u, 0.72)), 0.75);
-    return { top: -(0.012 + 0.092 * s) * (1 - 0.5 * u * u), bottom: (0.012 + 0.108 * s) * (1 - 0.6 * u * u) };
-  }
-  inFish(x, y) {
-    if (x < 0 || x > 1) return 0;
-    if (x <= 0.8) {
-      const p = this.profile(x);
-      if (y >= p.top && y <= p.bottom) return 1;                                                        // body
-      if (x > 0.50 && x < 0.66 && y < p.top && y > p.top - 0.07 * Math.sin((x - 0.50) / 0.16 * Math.PI) ** 0.5 * (x < 0.55 ? (x - 0.50) / 0.05 : 1)) return 2; // dorsal fin
-      if (x > 0.60 && x < 0.78 && y > p.bottom && y < p.bottom + 0.055 * Math.sin((x - 0.60) / 0.18 * Math.PI) ** 0.6) return 2;  // anal fin
-      if (x > 0.20 && x < 0.34 && y > p.bottom * 0.55 && y < p.bottom * 0.55 + 0.05 * (1 - Math.abs((x - 0.27) / 0.07))) return 2; // pectoral fin
-      if (x > 0.40 && x < 0.48 && y > p.bottom && y < p.bottom + 0.028 * (1 - Math.abs((x - 0.44) / 0.04))) return 2; // pelvic fin
-      return 0;
-    }
-    const v = (x - 0.8) / 0.2, half = 0.03 + 0.085 * Math.pow(v, 0.8), notch = v > 0.55 ? (v - 0.55) / 0.45 * 0.055 : 0; // forked caudal fin
-    return Math.abs(y) <= half && Math.abs(y) >= notch ? 3 : 0;
-  }
-  buildFish() {
-    let s = 23; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
-    const pts = []; let n = 0;
-    while (n < 7000) {
-      const x = rnd(), y = (rnd() - 0.5) * 0.36, kind = this.inFish(x, y);
-      if (!kind) continue;
-      const eye = Math.hypot(x - 0.105, y + 0.02);
-      if (eye < 0.017) continue;                                          // pupil: empty
-      if (kind === 2 && rnd() < 0.55) continue;                            // fins are sparse
-      let stripe = 0;
-      if (kind === 1 && x > 0.17) { const p = this.profile(x), v = (y - p.top) / (p.bottom - p.top); stripe = Math.sin(v * Math.PI * 5 - 0.3) > 0.15 ? 1 : 0; if (v < 0.08 || v > 0.92) stripe = 0; }
-      if (kind === 3) { const v = y / 0.12; stripe = Math.sin(v * Math.PI * 4) > 0.2 ? 1 : 0; }
-      pts.push([x, y, rnd(), kind, stripe, eye < 0.033 ? 1 : 0]); n++;
-    }
-    this.pts = pts;
-  }
-  // --- the hero: every neuron the brain reports, drawn as WebGL points ---
-  // /graph (json) says how many and where the layout is; /graph.bin is
-  // float32 (x, y) per neuron in the fish frame + uint16 population id.
-  // Until the brain answers, the decorative silhouette is drawn the same way.
+  // --- the hero: the brain's own neurons, in 3-D ---
+  // /graph says how many and where the layout is; /graph.bin is float32
+  // (x, y, z) per neuron — x rostral->caudal, y across the midline, z dorsal —
+  // followed by a uint16 population id. Drawn as WebGL points under a fixed
+  // near-dorsal view, depth shaded, so it reads as a brain rather than a
+  // filled outline.
+  POP_STYLE = { retina: 1, dsgc_up: 2, dsgc_down: 2, dsgc_left: 2, dsgc_right: 2,
+                nmlf: 3, vspn: 3, mauthner: 5, spinal: 4, other: 0 };
   loadLayout(n) {
     if (this.layoutLoading || this.layoutFailed) return;
     this.layoutLoading = true;
@@ -291,13 +259,23 @@ class Component extends DCLogic {
         .then(r => { if (!r.ok) throw new Error('graph.bin ' + r.status); return r.arrayBuffer(); })
         .then(buf => ({ g, buf })))
       .then(({ g, buf }) => {
-        const want = g.layout_bytes != null ? g.layout_bytes : g.n * 10;
+        const dims = g.dims || 2, want = g.layout_bytes != null ? g.layout_bytes : g.n * (dims * 4 + 2);
         if (buf.byteLength !== want) {
           throw new Error('layout is ' + buf.byteLength + ' bytes, expected ' + want +
                           ' for ' + g.n + ' neurons — a stale copy in a cache somewhere');
         }
-        const n = g.n, xy = new Float32Array(buf, 0, n * 2);
-        this.layout = { n, label: g.label, xy, styles: this.stylesFor(xy, n), pending: true };
+        const n = g.n;
+        const pos = new Float32Array(buf, 0, n * dims);
+        const gid = new Uint16Array(buf, n * dims * 4, n);
+        const xyz = dims === 3 ? pos : (() => {           // an older 2-D layout still draws
+          const out = new Float32Array(n * 3);
+          for (let i = 0; i < n; i++) { out[3 * i] = pos[2 * i]; out[3 * i + 1] = pos[2 * i + 1]; }
+          return out;
+        })();
+        const styles = new Uint8Array(n);
+        const names = g.groups || [];
+        for (let i = 0; i < n; i++) styles[i] = this.POP_STYLE[names[gid[i]]] ?? 0;
+        this.layout = { n, label: g.label, xyz, styles, pending: true };
         this.layoutTries = 0;
       })
       .catch(err => {
@@ -307,25 +285,8 @@ class Component extends DCLogic {
       })
       .finally(() => { this.layoutLoading = false; });
   }
-  // style byte per point, from the same rules the silhouette uses:
-  // 0 body · 1 body stripe · 2 fin · 3 tail · 4 tail stripe · 5 eye ring
-  stylesFor(xy, n) {
-    const st = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const x = xy[2 * i], y = xy[2 * i + 1];
-      const kind = this.inFish(x, y) || 1;
-      if (Math.hypot(x - 0.105, y + 0.02) < 0.033) { st[i] = 5; continue; }
-      let stripe = 0;
-      if (kind === 1 && x > 0.17) { const p = this.profile(x), v = (y - p.top) / (p.bottom - p.top); stripe = Math.sin(v * Math.PI * 5 - 0.3) > 0.15 ? 1 : 0; if (v < 0.08 || v > 0.92) stripe = 0; }
-      if (kind === 3) { const v = y / 0.12; stripe = Math.sin(v * Math.PI * 4) > 0.2 ? 1 : 0; }
-      st[i] = kind === 2 ? 2 : kind === 3 ? (stripe ? 4 : 3) : (stripe ? 1 : 0);
-    }
-    return st;
-  }
   // /firing.bin is one bit per neuron (numpy packbits, MSB first) — 23 KB at
-  // whole-brain scale, fetched when the heartbeat says the seq changed, the
-  // same swap-on-change the frame image uses. Unpacked into 0/1 bytes for the
-  // WebGL attribute.
+  // whole-brain scale, fetched when the heartbeat says the seq changed.
   pullMask(feed, n) {
     if (!feed || !feed.brain || feed.brain.firing_seq == null) return;
     const seq = feed.brain.firing_seq;
@@ -342,63 +303,94 @@ class Component extends DCLogic {
       .catch(() => {})
       .finally(() => { if (this._maskPending === seq) this._maskPending = null; });
   }
+  // Before the brain answers, a stand-in in the same anatomy: eyes, tecta,
+  // hindbrain, cord — sparse, so it reads as a placeholder, not as data.
+  standIn() {
+    if (this._stand) return this._stand;
+    let s = 23; const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
+    const blob = (out, st, count, c, r, shell, pair) => {
+      for (let i = 0; i < count; i++) {
+        let x = gauss(), y = gauss(), z = gauss();
+        const L = Math.hypot(x, y, z) || 1; x /= L; y /= L; z /= L;
+        let rad = Math.cbrt(rnd()); if (shell) rad = 1 - (1 - rad) * (1 - shell);
+        const sgn = pair && rnd() < 0.5 ? -1 : 1;
+        out.xyz.push(c[0] + x * rad * r[0], (c[1] + y * rad * r[1]) * sgn, c[2] + z * rad * r[2]);
+        out.st.push(st);
+      }
+    };
+    const o = { xyz: [], st: [] };
+    blob(o, 1, 2600, [0.100, 0.072, 0.000], [0.052, 0.040, 0.050], 0.62, true);
+    blob(o, 2, 1500, [0.232, 0.046, 0.028], [0.052, 0.031, 0.026], 0.55, true);
+    blob(o, 3, 900, [0.318, 0.022, -0.008], [0.040, 0.016, 0.016], 0, true);
+    blob(o, 0, 2000, [0.330, 0.000, 0.004], [0.090, 0.034, 0.026], 0, false);
+    for (let i = 0; i < 3000; i++) {          // the cord
+      const t = Math.pow(rnd(), 0.85), x = 0.44 + t * 0.56, rr = (0.020 + t * (0.004 - 0.020)) * Math.sqrt(rnd()), a = rnd() * 6.283;
+      o.xyz.push(x, rr * Math.cos(a), rr * Math.sin(a) * 0.8); o.st.push(4);
+    }
+    return (this._stand = { n: o.st.length, xyz: new Float32Array(o.xyz), styles: new Uint8Array(o.st) });
+  }
   initGL(cv) {
-    const gl = cv.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: false });
+    const gl = cv.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false });
     if (!gl) return null;
     const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.warn('[hero]', gl.getShaderInfoLog(s)); return null; } return s; };
     const vs = mk(gl.VERTEX_SHADER, `
-      attribute vec2 aPos; attribute float aStyle; attribute float aLit;
-      uniform vec2 uSize; uniform vec2 uOrigin; uniform float uScale, uTime, uLive, uDpr, uLitSize;
-      varying float vStyle, vLit;
+      attribute vec3 aPos; attribute float aStyle; attribute float aLit;
+      uniform vec2 uSize, uOrigin; uniform float uScale, uTilt, uSkew, uDpr, uLitSize, uSway;
+      varying float vStyle, vLit, vDepth, vX;
       void main() {
-        float sway = uLive * sin(uTime * 2.4 - aPos.x * 4.5) * 0.035 * aPos.x * aPos.x;
-        vec2 p = uOrigin + vec2(aPos.x, aPos.y + sway) * uScale;
-        gl_Position = vec4(p.x / uSize.x * 2.0 - 1.0, 1.0 - p.y / uSize.y * 2.0, 0.0, 1.0);
-        vStyle = aStyle; vLit = aLit;
-        gl_PointSize = (aLit > 0.5 ? uLitSize : 1.0) * uDpr;
+        // a swim bend along the body: the tail moves more than the head
+        float bend = uSway * sin(aPos.x * 5.0) * aPos.x * aPos.x;
+        vec3 p = vec3(aPos.x, aPos.y + bend, aPos.z);
+        // near-dorsal view, tilted about the body axis so the brain has volume
+        float c = cos(uTilt), s = sin(uTilt);
+        float up    =  p.y * c + p.z * s;     // screen vertical
+        float depth = -p.y * s + p.z * c;     // toward the viewer
+        vec2 q = uOrigin + vec2(p.x + depth * uSkew, up) * uScale;
+        gl_Position = vec4(q.x / uSize.x * 2.0 - 1.0, 1.0 - q.y / uSize.y * 2.0, 0.0, 1.0);
+        vStyle = aStyle; vLit = aLit; vX = aPos.x;
+        vDepth = clamp(depth / 0.12 + 0.5, 0.0, 1.0);          // 0 far, 1 near
+        float size = aLit > 0.5 ? uLitSize : (aStyle == 5.0 ? 3.0 : 1.0);
+        gl_PointSize = size * uDpr * (0.75 + 0.5 * vDepth);
       }`);
     const fs = mk(gl.FRAGMENT_SHADER, `
-      precision mediump float; varying float vStyle, vLit; uniform vec3 uPaper, uBlue; uniform float uDim, uLitA;
+      precision mediump float;
+      varying float vStyle, vLit, vDepth, vX;
+      uniform vec3 uPaper, uBlue; uniform float uDim, uLitA, uFade;
       void main() {
-        vec3 c = uPaper; float a = 0.24;
-        if (vLit > 0.5) a = uLitA;
-        else if (vStyle == 5.0) a = 0.95 * uDim;
-        else if (vStyle == 1.0) { c = uBlue; a = 1.0 * uDim; }
-        else if (vStyle == 4.0) { c = uBlue; a = 0.6 * uDim; }
-        else if (vStyle == 2.0) a = 0.2 * uDim;
-        else if (vStyle == 3.0) a = 0.18 * uDim;
-        else a = 0.24 * uDim;
+        vec3 c = uPaper; float a;
+        if (vStyle == 1.0)      { c = uBlue;  a = 0.85; }   // retina: the eyes
+        else if (vStyle == 2.0) { c = mix(uBlue, uPaper, 0.35); a = 0.75; }  // tectum
+        else if (vStyle == 3.0) { a = 0.70; }               // nMLF / vSPN
+        else if (vStyle == 4.0) { a = 0.50; }               // spinal cord
+        else if (vStyle == 5.0) { a = 1.0; }                // the Mauthner pair
+        else                    { a = 0.62; }               // hindbrain
+        a *= uDim * (0.45 + 0.55 * vDepth);                 // far side falls away
+        a *= 1.0 - smoothstep(uFade * 0.55, uFade, vX);     // the cord runs out of frame
+        if (vLit > 0.5) { c = uPaper; a = uLitA; }
         gl_FragColor = vec4(c, a);
       }`);
     if (!vs || !fs) return null;
     const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { console.warn('[hero]', gl.getProgramInfoLog(prog)); return null; }
     gl.useProgram(prog);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    const a = (name) => gl.getAttribLocation(prog, name), u = (name) => gl.getUniformLocation(prog, name);
+    const a = n => gl.getAttribLocation(prog, n), u = n => gl.getUniformLocation(prog, n);
     return { gl, prog, n: 0, aPos: a('aPos'), aStyle: a('aStyle'), aLit: a('aLit'),
-      uSize: u('uSize'), uOrigin: u('uOrigin'), uScale: u('uScale'), uTime: u('uTime'), uLive: u('uLive'), uDpr: u('uDpr'), uPaper: u('uPaper'), uBlue: u('uBlue'), uDim: u('uDim'), uLitA: u('uLitA'), uLitSize: u('uLitSize'),
+      uSize: u('uSize'), uOrigin: u('uOrigin'), uScale: u('uScale'), uTilt: u('uTilt'), uSkew: u('uSkew'),
+      uDpr: u('uDpr'), uLitSize: u('uLitSize'), uSway: u('uSway'), uPaper: u('uPaper'), uBlue: u('uBlue'),
+      uDim: u('uDim'), uLitA: u('uLitA'), uFade: u('uFade'),
       bPos: gl.createBuffer(), bStyle: gl.createBuffer(), bLit: gl.createBuffer() };
   }
-  glUpload(G, xy, styles) {
+  glUpload(G, xyz, styles) {
     const gl = G.gl, n = styles.length;
-    gl.bindBuffer(gl.ARRAY_BUFFER, G.bPos); gl.bufferData(gl.ARRAY_BUFFER, xy, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(G.aPos); gl.vertexAttribPointer(G.aPos, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, G.bPos); gl.bufferData(gl.ARRAY_BUFFER, xyz, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(G.aPos); gl.vertexAttribPointer(G.aPos, 3, gl.FLOAT, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, G.bStyle); gl.bufferData(gl.ARRAY_BUFFER, styles, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(G.aStyle); gl.vertexAttribPointer(G.aStyle, 1, gl.UNSIGNED_BYTE, false, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(n), gl.DYNAMIC_DRAW);
     gl.enableVertexAttribArray(G.aLit); gl.vertexAttribPointer(G.aLit, 1, gl.UNSIGNED_BYTE, false, 0, 0);
     G.n = n; G.litZero = true;
-  }
-  silhouettePoints() {
-    if (this._sil) return this._sil;
-    const n = this.pts.length, xy = new Float32Array(n * 2), st = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const [x, y, , kind, stripe, ring] = this.pts[i];
-      xy[2 * i] = x; xy[2 * i + 1] = y;
-      st[i] = ring ? 5 : kind === 2 ? 2 : kind === 3 ? (stripe ? 4 : 3) : (stripe ? 1 : 0);
-    }
-    return (this._sil = { xy, styles: st });
   }
   resize() {
     const cv = this.cvRef.current; if (!cv) return;
@@ -407,55 +399,46 @@ class Component extends DCLogic {
   }
   draw() {
     const cv = this.cvRef.current;
-    if (cv && this.pts) {
+    if (cv) {
       if (this.G === undefined) this.G = this.initGL(cv);
       const W = cv.width, H = cv.height, d = devicePixelRatio;
       const now = performance.now() / 1000, live = this.isLive(), f = this.state.feed;
       const cs = getComputedStyle(cv);
       const paper = cs.getPropertyValue('--color-bg').trim() || '#f2f2f3';
       const blue = cs.getPropertyValue('--color-accent-300').trim() || '#b5d9fd';
-      const scale = Math.min(W * 0.92, H * 2.6), ox = (W - scale) / 2, oy = H * 0.5;
-      const brain = this.layout;            // the brain's own neurons, once loaded
-      if (this.G) {
-        const G = this.G, gl = G.gl;
-        if (brain && brain.pending) { this.glUpload(G, brain.xy, brain.styles); brain.pending = false; this._maskSeq = -1; }
-        else if (!brain && G.n === 0) { const s = this.silhouettePoints(); this.glUpload(G, s.xy, s.styles); }
-        if (brain && live) {
-          this.pullMask(f, brain.n);
-          if (this._litDirty && this._lit && this._lit.length === G.n) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._lit);
-            this._litDirty = false; G.litZero = false;
-          }
-        } else if (!G.litZero) { gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Uint8Array(G.n)); G.litZero = true; this._maskSeq = -1; }
-        const rgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
-        gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
-        gl.uniform2f(G.uSize, W, H); gl.uniform2f(G.uOrigin, ox, oy); gl.uniform1f(G.uScale, scale);
-        gl.uniform1f(G.uTime, now); gl.uniform1f(G.uLive, live ? 1 : 0); gl.uniform1f(G.uDpr, d);
-        gl.uniform3fv(G.uPaper, rgb(paper.length === 7 ? paper : '#f2f2f3')); gl.uniform3fv(G.uBlue, rgb(blue.length === 7 ? blue : '#b5d9fd'));
-        // 187,000 dots in one silhouette would read as a solid block: fade the
-        // resting ones as the brain gets bigger so the firing ones carry it
-        gl.uniform1f(G.uDim, Math.min(1, Math.max(0.22, 26000 / Math.max(1, G.n))));
-        gl.uniform1f(G.uLitA, Math.min(1, Math.max(0.5, 70000 / Math.max(1, G.n))));
-        gl.uniform1f(G.uLitSize, G.n > 50000 ? 1.0 : 2.0);
-        gl.drawArrays(gl.POINTS, 0, G.n);
-      } else {
-        // no WebGL: the same picture with fillRect (fine for thousands, slow for a whole brain)
-        const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, W, H);
-        const src = brain ? brain : this.silhouettePoints(); const n = brain ? brain.n : this.pts.length;
-        if (brain && live) this.pullMask(f, n);
-        const lit = brain && live ? this._lit : null;
-        for (let i = 0; i < n; i++) {
-          const x = src.xy[2 * i], y = src.xy[2 * i + 1], st = src.styles[i];
-          const sway = live ? Math.sin(now * 2.4 - x * 4.5) * 0.035 * x * x : 0;
-          const px = ox + x * scale, py = oy + (y + sway) * scale;
-          const on = lit && lit[i];
-          ctx.fillStyle = (st === 1 || st === 4) && !on ? blue : paper;
-          ctx.globalAlpha = on ? 1 : st === 5 ? 0.95 : st === 1 ? 1 : st === 4 ? 0.6 : st === 2 ? 0.2 : st === 3 ? 0.18 : 0.24;
-          const r = (on ? 2.4 : st === 5 ? 1.5 : 1.15) * d;
-          ctx.fillRect(px, py, r, r);
+      const brain = live && this.layout ? this.layout : null;
+      const src = brain || this.standIn();
+      const G = this.G;
+      if (!G) { this.raf = requestAnimationFrame(() => this.draw()); return; }
+      const gl = G.gl;
+      if (brain && brain.pending) { this.glUpload(G, brain.xyz, brain.styles); brain.pending = false; this._maskSeq = -1; this._showing = 'brain'; }
+      else if (!brain && this._showing !== 'stand') { this.glUpload(G, src.xyz, src.styles); this._showing = 'stand'; }
+      if (brain && live) {
+        this.pullMask(f, brain.n);
+        if (this._litDirty && this._lit && this._lit.length === G.n) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, this._lit);
+          this._litDirty = false; G.litZero = false;
         }
-        ctx.globalAlpha = 1;
-      }
+      } else if (!G.litZero) { gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Uint8Array(G.n)); G.litZero = true; this._maskSeq = -1; }
+      // Frame the brain, not the whole animal: the head and midbrain are in
+      // x 0..0.5 and the cord runs to 1.0, so fitting the body length would
+      // leave the interesting part tiny. Fill the width with the front ~55%
+      // and let the cord taper out of frame.
+      const SPAN = 0.30;
+      const scale = Math.min(W * 0.92 / SPAN, H * 6.2), ox = W * 0.03, oy = H * 0.5;
+      const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+      gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.uniform2f(G.uSize, W, H); gl.uniform2f(G.uOrigin, ox, oy); gl.uniform1f(G.uScale, scale);
+      gl.uniform1f(G.uTilt, 0.72); gl.uniform1f(G.uSkew, 0.22); gl.uniform1f(G.uDpr, d);
+      gl.uniform1f(G.uSway, live ? Math.sin(now * 1.2) * 0.012 : 0.0);
+      gl.uniform3fv(G.uPaper, rgb(paper.length === 7 ? paper : '#f2f2f3'));
+      gl.uniform3fv(G.uBlue, rgb(blue.length === 7 ? blue : '#b5d9fd'));
+      // 187,000 points in one head would read as a solid block; fade with the crowd
+      gl.uniform1f(G.uDim, Math.min(1, Math.max(0.88, 60000 / Math.max(1, G.n))));
+      gl.uniform1f(G.uLitA, Math.min(1, Math.max(0.55, 60000 / Math.max(1, G.n))));
+      gl.uniform1f(G.uLitSize, G.n > 50000 ? 1.6 : 2.4);
+      gl.uniform1f(G.uFade, SPAN * 2.0);
+      gl.drawArrays(gl.POINTS, 0, G.n);
     }
     this.raf = requestAnimationFrame(() => this.draw());
   }

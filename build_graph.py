@@ -252,6 +252,92 @@ def _fanin_multiplier(sizes, target=None):
     return (TARGET_FANIN if target is None else target) / base
 
 
+
+# ---------------------------------------------------------------------------
+# where the neurons actually are: a larval zebrafish brain in 3-D
+#
+# The old layout filled a cartoon fish outline with dots, which renders as
+# clip art. A 5-7 dpf larva's brain has a shape worth drawing: two enormous
+# eyes, a pair of optic tecta over the midbrain, a hindbrain running back
+# along the midline, the Mauthner pair in rhombomere 4, and a spinal cord
+# tapering into the tail. Frame: x rostral->caudal (0..1 of body length),
+# y left-right (0 = midline), z ventral->dorsal.
+# ---------------------------------------------------------------------------
+ANATOMY = {
+    # A 5-7 dpf larva is ~4 mm long and almost all of that is tail: the brain
+    # sits in the first fifth. Frame below is fractions of body length.
+    # name:        centre (x, y, z),        radii (x, y, z),        shell, paired
+    "eye":        ((0.097, 0.043, 0.000), (0.034, 0.024, 0.030), 0.55, True),
+    "tectum":     ((0.146, 0.030, 0.015), (0.038, 0.026, 0.021), 0.45, True),
+    "nmlf":       ((0.172, 0.012, -0.006), (0.018, 0.009, 0.010), 0.0, True),
+    "vspn":       ((0.203, 0.013, -0.009), (0.020, 0.010, 0.010), 0.0, True),
+    "mauthner":   ((0.214, 0.012, -0.006), (0.003, 0.0015, 0.002), 0.0, True),
+    # one continuous mass from behind the eyes to the cord — without it the
+    # eyes and tecta read as four loose balls instead of one brain
+    "hindbrain":  ((0.158, 0.000, 0.002), (0.080, 0.030, 0.019), 0.0, False),
+}
+CORD = dict(x0=0.235, x1=1.0, r0=0.013, r1=0.0025)   # the cord tapers down the tail
+
+
+def _blob(rng, n, centre, radii, shell=0.0, pair=False):
+    """n points in an ellipsoid. `shell` (0..1) pushes them toward the surface —
+    the retina is a cup and the tectum a sheet, so their cells sit on a shell,
+    not through the middle. `pair` mirrors the blob about the midline."""
+    if n <= 0:
+        return np.zeros((0, 3), np.float32)
+    v = rng.normal(size=(n, 3))
+    v /= np.linalg.norm(v, axis=1, keepdims=True)
+    # radius^(1/3) fills a ball uniformly; biasing the exponent hollows it out
+    r = rng.random(n) ** (1.0 / 3.0)
+    if shell > 0:
+        r = 1.0 - (1.0 - r) * (1.0 - shell)
+    p = v * r[:, None] * np.asarray(radii)
+    p += np.asarray(centre)
+    if pair:
+        # mirror half of them across the MIDLINE (y = 0), not about the blob's
+        # own centre — a larva has an eye on each side, not two on one
+        side = rng.random(n) < 0.5
+        p[side, 1] *= -1.0
+    return p.astype(np.float32)
+
+
+def _cord(rng, n, x0, x1, r0, r1):
+    """A tapering tube down the tail: the spinal cord."""
+    if n <= 0:
+        return np.zeros((0, 3), np.float32)
+    t = rng.random(n) ** 0.85            # a little denser at the front
+    x = x0 + t * (x1 - x0)
+    r = (r0 + t * (r1 - r0)) * np.sqrt(rng.random(n))
+    a = rng.random(n) * 2 * np.pi
+    return np.stack([x, r * np.cos(a), r * np.sin(a) * 0.8], axis=1).astype(np.float32)
+
+
+def larva_anatomy(n, sizes, rng):
+    """Positions for every neuron, by population, in the shape of a larva.
+    Returns coords (n,3) and the index arrays per group."""
+    coords = np.zeros((n, 3), np.float32)
+    groups, i = {}, 0
+
+    def take(name, count, pts):
+        nonlocal i
+        idx = np.arange(i, i + count, dtype=np.int64)
+        coords[idx] = pts
+        groups[name] = idx
+        i += count
+
+    take("retina", sizes["retina"], _blob(rng, sizes["retina"], *ANATOMY["eye"]))
+    # the tectum is one sheet per side; the four direction channels are read off
+    # it by position, the way a real retinotopic map is divided
+    tect = _blob(rng, sizes["dsgc"], *ANATOMY["tectum"])
+    take("dsgc", sizes["dsgc"], tect)
+    take("nmlf", sizes["nmlf"], _blob(rng, sizes["nmlf"], *ANATOMY["nmlf"]))
+    take("vspn", sizes["vspn"], _blob(rng, sizes["vspn"], *ANATOMY["vspn"]))
+    take("mauthner", sizes["mauthner"], _blob(rng, sizes["mauthner"], *ANATOMY["mauthner"]))
+    take("other", sizes["other"], _blob(rng, sizes["other"], *ANATOMY["hindbrain"]))
+    take("spinal", n - i, _cord(rng, n - i, **CORD))
+    return coords, groups
+
+
 def synthetic_graph(n=REAL_NEURONS, seed=7, target_fanin=None):
     """A fish-shaped, fully wired synthetic connectome at the larva's own scale.
 
@@ -265,32 +351,21 @@ def synthetic_graph(n=REAL_NEURONS, seed=7, target_fanin=None):
     mult = _fanin_multiplier(sizes, target_fanin)
     K = {rule: max(1, int(round(v["k"] * mult))) for rule, v in SYN.items()}
 
-    pts = fish_points(n)
-    coords = np.empty((n, 3), np.float32)
-    coords[:, 0] = [p[0] for p in pts]
-    coords[:, 1] = [p[1] for p in pts]
-    coords[:, 2] = 0.0
-    order = np.argsort(coords[:, 0], kind="stable")     # head -> tail
+    coords, groups = larva_anatomy(n, sizes, rng)
 
-    groups = {}
-    i = 0
-    for name in ("retina", "dsgc", "nmlf", "vspn", "mauthner", "other"):
-        groups[name] = order[i:i + sizes[name]]
-        i += sizes[name]
-    groups["spinal"] = order[i:]
-
-    # retina: index order (y, x) so the 12x18 retina grid resamples onto it retinotopically
+    # retina: index order (dorso-ventral, rostro-caudal) within the eyes, so the
+    # 12x18 luminance grid lands on it as a visual field, not at random
     r = groups["retina"]
-    groups["retina"] = r[np.lexsort((coords[r, 0], coords[r, 1]))]
-    # DSGC directions by quadrant around the tectum centroid
+    groups["retina"] = r[np.lexsort((coords[r, 0], coords[r, 2]))]
+    # the four direction channels are quadrants of the tectal map
     d = groups["dsgc"]
-    cx, cy = coords[d, 0].mean(), coords[d, 1].mean()
-    up, dn = coords[d, 1] < cy, coords[d, 1] >= cy
+    cx, cz = coords[d, 0].mean(), coords[d, 2].mean()
+    up, dn = coords[d, 2] >= cz, coords[d, 2] < cz
     lf, rt = coords[d, 0] < cx, coords[d, 0] >= cx
     groups["dsgc_up"], groups["dsgc_down"] = d[up & lf], d[dn & lf]
     groups["dsgc_left"], groups["dsgc_right"] = d[up & rt], d[dn & rt]
     del groups["dsgc"]
-    # the Mauthner pair sits on the midline, one per side
+    # the Mauthner pair: one cell per side of the midline
     m = groups["mauthner"]
     groups["mauthner"] = m[np.argsort(coords[m, 1])][[0, -1]] if len(m) > 1 else m
 

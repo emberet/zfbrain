@@ -14,7 +14,7 @@ Everything the fish just did is published, in-process, on 127.0.0.1:4660:
     GET /frame.mjpg the same camera as a video stream (multipart/x-mixed-replace)
     GET /events     the same heartbeat as a Server-Sent-Events stream (~2 Hz)
     GET /graph      the running graph: counts, populations, where the layout is
-    GET /graph.bin  every neuron's position + population, binary (once per page load)
+    GET /graph.bin  every neuron's position (3-D) + population, binary
     GET /firing.bin?seq=N  which neurons fired in the last 5 ms, one bit each
     GET /healthz    200 while the process is up
 
@@ -199,15 +199,17 @@ class Roamer:
         gid = np.full(self.sim.n, 65535, dtype=np.uint16)
         for i, name in enumerate(names):
             gid[np.asarray(self.groups[name], dtype=np.int64)] = i
-        xy = np.asarray(self.sim.coords, dtype=np.float32)[:, :2].copy()
+        xyz = np.asarray(self.sim.coords, dtype=np.float32)[:, :3].copy()
         if self.meta.get("source") not in ("synthetic", "smoke"):
-            # lateral projection of real somata into the fish frame: x along
-            # the body, y dorso-ventral, both normalised to the drawn silhouette
-            lo, hi = xy.min(axis=0), xy.max(axis=0)
-            span = np.maximum(hi - lo, 1e-6)
-            xy[:, 0] = (xy[:, 0] - lo[0]) / span[0]
-            xy[:, 1] = (xy[:, 1] - lo[1]) / span[1] * 0.26 - 0.13
-        self.graph_bin = xy.astype("<f4").tobytes() + gid.astype("<u2").tobytes()
+            # a real EM volume arrives in microns: put it in the same frame the
+            # synthetic anatomy uses — x rostral->caudal over the body length,
+            # y and z centred on the midline at the same scale
+            lo, hi = xyz.min(axis=0), xyz.max(axis=0)
+            span = max(float((hi - lo)[0]), 1e-6)
+            xyz = (xyz - lo) / span
+            xyz[:, 1] -= xyz[:, 1].mean()
+            xyz[:, 2] -= xyz[:, 2].mean()
+        self.graph_bin = xyz.astype("<f4").tobytes() + gid.astype("<u2").tobytes()
         # The layout is cached hard at the edge (a day), so its URL has to change
         # when the graph does — otherwise a new brain is served with an old
         # body. /frame.jpg and /firing.bin already carry a seq for this reason;
@@ -218,7 +220,7 @@ class Roamer:
         doc = {"n": int(self.sim.n), "label": self.meta["label"], "source": self.meta.get("source"),
                "built_at": self.meta.get("built_at"), "synapses": self.meta.get("synapses"),
                "groups": names, "layout": f"/graph.bin?v={self.graph_ver}",
-               "layout_bytes": len(self.graph_bin)}
+               "layout_bytes": len(self.graph_bin), "dims": 3}
         return json.dumps(doc, separators=(",", ":")).encode()
 
     def _require_groups(self):
