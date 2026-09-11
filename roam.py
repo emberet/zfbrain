@@ -635,6 +635,7 @@ def make_handler(roamer):
                os.environ.get("ZF_LIVE_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()}
     max_sse = int(os.environ.get("ZF_LIVE_MAX_SSE", "200"))
     max_mjpeg = int(os.environ.get("ZF_LIVE_MAX_MJPEG", "40"))  # ~90 KB/s each
+    refused = set()   # origins already complained about, so the log says it once
 
     class H(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -644,6 +645,26 @@ def make_handler(roamer):
             if origin and origin in origins:
                 self.send_header("Access-Control-Allow-Origin", origin)
                 self.send_header("Vary", "Origin")
+            elif origin and origin not in refused:
+                # a browser that gets no header reports it as a CORS error with
+                # no clue why; say it here once per origin instead
+                refused.add(origin)
+                print(f"CORS: refused {origin} (allowed: {sorted(origins)})", file=sys.stderr)
+
+        def _stream_headers(self, content_type, extra=()):
+            """Headers for an endless body. HTTP/1.1 needs the connection closed
+            to delimit a response with no Content-Length; without this the
+            stream is ambiguously framed and browsers drop it."""
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.send_header("X-Accel-Buffering", "no")
+            self.send_header("Connection", "close")
+            for k, v in extra:
+                self.send_header(k, v)
+            self._cors()
+            self.close_connection = True
+            self.end_headers()
 
         def _send(self, code, body, ctype, cache="no-store", extra=()):
             self.send_response(code)
@@ -721,12 +742,7 @@ def make_handler(roamer):
                            extra=[("Retry-After", "5")])
                 return
             try:
-                self.send_response(200)
-                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=zfframe")
-                self.send_header("Cache-Control", "no-cache, no-store")
-                self.send_header("X-Accel-Buffering", "no")
-                self._cors()
-                self.end_headers()
+                self._stream_headers("multipart/x-mixed-replace; boundary=zfframe")
                 seen = -1
                 while True:
                     frame, seen = feed.wait_for_frame(seen, timeout=10)
@@ -754,12 +770,7 @@ def make_handler(roamer):
                            extra=[("Retry-After", "5")])
                 return
             try:
-                self.send_response(200)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("X-Accel-Buffering", "no")
-                self._cors()
-                self.end_headers()
+                self._stream_headers("text/event-stream")
                 seen = -1
                 while True:
                     t0 = time.time()
