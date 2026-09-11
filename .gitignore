@@ -25,3 +25,8 @@ dist/
 .dev.vars*
 !.dev.vars.example
 !.env.example
+
+# the heartbeat lives in .state/ and on the live feed; a copy under site/
+# would be published by zfsite.py as a stale snapshot nothing reads
+site/live.json
+site/web/

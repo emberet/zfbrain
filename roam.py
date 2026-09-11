@@ -500,23 +500,21 @@ class Roamer:
             self._write_state(state)
 
     def _write_state(self, state):
-        base = os.path.dirname(os.path.abspath(__file__))
-        seams = [os.path.join(self.state_dir, "live.json"),     # 1 brain (REAL)
-                 os.path.join(base, "site", "live.json"),       # 2 ROOT legal open twin
-                 os.path.join(base, "site", "web", "live.json")]  # 3 web twin
+        """The heartbeat on disk, for anything local that wants to read it.
+
+        Only .state/ — never site/. site/ is what zfsite.py uploads to
+        Cloudflare Pages, so a copy written there gets published as a frozen
+        snapshot of a moment that has already passed, and nothing reads it:
+        the page subscribes to live.zfbrain.online/state for the live one."""
+        path = os.path.join(self.state_dir, "live.json")
+        tmp = path + ".tmp"
         try:
-            for seam in seams:
-                os.makedirs(os.path.dirname(seam), exist_ok=True)
-                if seam.endswith("/site/live.json") or seam == base + "/site/live.json" or "/site/live.json" in seam:
-                    _tmp = seam + ".core.tmp"
-                else:
-                    _tmp = seam + ".tmp"
-                with open(_tmp, "w") as f:
-                    json.dump(state, f)
-                os.replace(_tmp, seam)
+            with open(tmp, "w") as f:
+                json.dump(state, f)
+            os.replace(tmp, path)
             self._last_file_write = time.time()
         except OSError as exc:
-            print(f"live.json seam: {exc}", file=sys.stderr)
+            print(f"live.json: {exc}", file=sys.stderr)
 
     # ---- the loop -----------------------------------------------------
     def run(self, hops=None):
