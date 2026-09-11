@@ -2,7 +2,8 @@
 #
 # brain + roamer
 numpy>=1.26
-pandas>=2.0            # build_graph.py (CSV -> graph.npz)
+numba>=0.60            # fishsim.py: event-driven LIF kernels (numpy fallback if missing)
+pandas>=2.0            # build_graph.py
 playwright>=1.45       # roam.py — then run: python -m playwright install chromium
 pillow>=10.0           # roam.py — decodes the screenshot for the retina + live frame
 #
@@ -14,5 +15,6 @@ requests>=2.31
 # narrator (voice.py) — Anthropic SDK; needs ANTHROPIC_API_KEY in .env
 anthropic>=0.40
 #
-# data spike only (fetch_cave.py); not needed to run the fish
-# caveclient
+# the real connectome (fetch_cave.py -> data/raw/*.parquet); not needed to run the synthetic fish
+caveclient>=8.0
+pyarrow>=15

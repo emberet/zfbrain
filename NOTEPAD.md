@@ -5,13 +5,19 @@ need a human (accounts, keys, servers, real money) are marked **[HW]**; an
 agent can take everything else.
 
 ## 1 · Data spike — the gate for everything downstream **[HW FIRST]**
-Fish1 lives in a CAVE database (still being proofread). Before the graph can
-be real, confirm what is actually usable:
+Three whole-brain larval EM reconstructions exist (all 2025 preprints, all
+access-by-request). Decision (2026-09-11): build on the **Harvard/Google 7 dpf
+"connectomic resource"** (Lichtman/Engert + Google): 187,053 cell bodies,
+41,175 molecularly typed neurons (vglut2a/gad1b), 29.5 M axon→dendrite +
+9.5 M axon→axon synapses, polarity for 21 M, Z-brain registered, on CAVE.
+(Janelia Fish Fire&Wire, ~140k neurons + functional imaging, is the one with
+the Dec-2027 paper embargo; Fish-X has the retina in the volume.)
 
-- [ ] Get a CAVE login + `CAVE_AUTH_TOKEN` (Fish1 browsing is public; refresh
-      the auth token for a current materialization).
-- [ ] Confirm the **datastack name** and live synapse/cell table names; update
-      `fetch_cave.py` (currently assumes `fish1` + `live_query`).
+- [ ] **[HW]** Request access to the Harvard/Google CAVE deployment; put
+      `ZF_CAVE_DATASTACK` + `CAVE_AUTH_TOKEN` in `.env`.
+- [ ] `python fetch_cave.py --spike` — census the datastack (tables, counts,
+      columns); then `--export <cells>` and `--export <synapses>` to
+      `data/raw/*.parquet` (written, untested until the token exists).
 - [ ] Confirm the synapse export columns (pre_root, post_root, coords, E/I =
       vglut2a / gad1b). Map them into `data/raw/neurons.csv`,
       `data/raw/synapses.csv`, `data/raw/groups.csv`.
@@ -47,7 +53,14 @@ be real, confirm what is actually usable:
       (> ZF_ESCAPE_HZ) with corollary discharge after the fish's own bout.
       `python fishsim.py` asserts: all populations > 0 Hz, none saturated,
       still page = no bout/turn/escape, rightward drive steers right, a flash
-      lifts Mauthner ≥ 5×.
+      lifts Mauthner ≥ 5×, ten flashes habituate it (280 → 110 Hz).
+- [x] Simulator at whole-brain scale: CSR + event-driven propagation in numba
+      (`python fishsim.py --bench 180000`: 0.26 ms/step at 1 Hz, ~4 ms/step
+      in runaway; a 400-step frame is 0.1–1.7 s at 180k neurons / 30 M
+      synapses on the M4). Numpy fallback is the same maths, ~7× slower.
+- [x] Habituation = short-term synaptic depression on the sensory neurons'
+      outgoing synapses (`ZF_DEP_U` 0.002 per spike, `ZF_DEP_TAU` 20 s); the
+      feed carries `brain.habituation`, the site shows it. No reward invented.
 - [ ] Re-run the same checks on the Fish1 graph when it exists; the synthetic
       weights are hand-tuned (`SYN` in build_graph.py) and will not carry over.
 - [ ] Storyboard the 3 site behaviors on a webpage: optic-flow scroll, nMLF
@@ -113,6 +126,9 @@ be real, confirm what is actually usable:
       the running graph; asleep state when nothing answers.
 - [x] Live panel is public: zfbrain.online subscribes to
       live.zfbrain.online/events and shows the fish's frame (2026-09-11).
+- [x] Hero is WebGL points fed by `/graph.bin` (float32 xy + uint16 group per
+      neuron) and the heartbeat's `firing_mask` — sized for 187k neurons;
+      real volumes get projected to the lateral view in roam.py.
 - [ ] Add the $ZFBRAIN contract + explorer link once launched.
 - [ ] Keep the honest list green. Every "what is not real" claim must stay true.
 

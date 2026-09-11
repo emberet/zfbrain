@@ -183,10 +183,10 @@ def fish_points(n=7000, seed=23):
 
 # synapse counts per connection; FishSim maps count 6 -> EPSP mV, count 1 -> EPSP/6
 SYN = {
-    "retina->dsgc":   dict(k=10, count=5, p_exc=0.72),
-    "dsgc->nmlf":     dict(k=8,  count=4),
-    "dsgc->vspn":     dict(k=8,  count=4),
-    "dsgc->other":    dict(k=6,  count=4),
+    "retina->dsgc":   dict(k=16, count=6, p_exc=0.72),   # sized for a page-like 40 Hz retinal drive
+    "dsgc->nmlf":     dict(k=8,  count=5),
+    "dsgc->vspn":     dict(k=8,  count=5),
+    "dsgc->other":    dict(k=6,  count=5),
     "other->other":   dict(k=5,  count=3),
     "other->nmlf":    dict(k=3,  count=2),
     "vspn->other":    dict(k=2,  count=2),

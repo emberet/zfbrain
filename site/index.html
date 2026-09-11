@@ -272,31 +272,101 @@ class Component extends DCLogic {
     }
     this.pts = pts;
   }
-  // The brain's own neurons: fetched once from /graph (position + population
-  // per neuron). Styled with the same profile/inFish rules as the silhouette,
-  // so the fish keeps its look while every dot is a real simulated neuron.
+  // --- the hero: every neuron the brain reports, drawn as WebGL points ---
+  // /graph (json) says how many and where the layout is; /graph.bin is
+  // float32 (x, y) per neuron in the fish frame + uint16 population id.
+  // Until the brain answers, the decorative silhouette is drawn the same way.
   loadLayout(n) {
     if (this.layoutLoading) return;
     this.layoutLoading = true;
-    fetch(this.LIVE_BASE + '/graph').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(g => {
-      const pts = g.coords.map(([x, y]) => {
-        const kind = this.inFish(x, y) || 1;
-        const eye = Math.hypot(x - 0.105, y + 0.02);
-        let stripe = 0;
-        if (kind === 1 && x > 0.17) { const p = this.profile(x), v = (y - p.top) / (p.bottom - p.top); stripe = Math.sin(v * Math.PI * 5 - 0.3) > 0.15 ? 1 : 0; if (v < 0.08 || v > 0.92) stripe = 0; }
-        if (kind === 3) { const v = y / 0.12; stripe = Math.sin(v * Math.PI * 4) > 0.2 ? 1 : 0; }
-        return [x, y, kind, stripe, eye < 0.033 ? 1 : 0];
-      });
-      this.layout = { n: g.n, label: g.label, pts };
-    }).catch(() => { this.layout = null; }).finally(() => { this.layoutLoading = false; });
+    fetch(this.LIVE_BASE + '/graph').then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(g => fetch(this.LIVE_BASE + (g.layout || '/graph.bin')).then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then(buf => ({ g, buf })))
+      .then(({ g, buf }) => {
+        const n = g.n, xy = new Float32Array(buf, 0, n * 2);
+        this.layout = { n, label: g.label, xy, styles: this.stylesFor(xy, n), pending: true };
+      })
+      .catch(() => { this.layout = null; })
+      .finally(() => { this.layoutLoading = false; });
   }
-  // firing_mask: one bit per neuron (numpy packbits, MSB first), base64
-  maskBits(feed) {
+  // style byte per point, from the same rules the silhouette uses:
+  // 0 body · 1 body stripe · 2 fin · 3 tail · 4 tail stripe · 5 eye ring
+  stylesFor(xy, n) {
+    const st = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = xy[2 * i], y = xy[2 * i + 1];
+      const kind = this.inFish(x, y) || 1;
+      if (Math.hypot(x - 0.105, y + 0.02) < 0.033) { st[i] = 5; continue; }
+      let stripe = 0;
+      if (kind === 1 && x > 0.17) { const p = this.profile(x), v = (y - p.top) / (p.bottom - p.top); stripe = Math.sin(v * Math.PI * 5 - 0.3) > 0.15 ? 1 : 0; if (v < 0.08 || v > 0.92) stripe = 0; }
+      if (kind === 3) { const v = y / 0.12; stripe = Math.sin(v * Math.PI * 4) > 0.2 ? 1 : 0; }
+      st[i] = kind === 2 ? 2 : kind === 3 ? (stripe ? 4 : 3) : (stripe ? 1 : 0);
+    }
+    return st;
+  }
+  // firing_mask: one bit per neuron (numpy packbits, MSB first), base64 -> 0/1 bytes
+  unpackMask(feed, n) {
     if (!feed || !feed.brain || !feed.brain.firing_mask) return null;
-    if (this._maskSeq === feed.seq) return this._mask;
-    const bin = atob(feed.brain.firing_mask), bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    this._maskSeq = feed.seq; this._mask = bytes; return bytes;
+    if (this._maskSeq === feed.seq) return null;  // already applied
+    const bin = atob(feed.brain.firing_mask), lit = this._lit && this._lit.length === n ? this._lit : new Uint8Array(n);
+    for (let i = 0; i < n; i++) { const b = bin.charCodeAt(i >> 3); lit[i] = (b >> (7 - (i & 7))) & 1; }
+    this._maskSeq = feed.seq; this._lit = lit; return lit;
+  }
+  initGL(cv) {
+    const gl = cv.getContext('webgl', { alpha: true, antialias: false, premultipliedAlpha: false, preserveDrawingBuffer: false });
+    if (!gl) return null;
+    const mk = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { console.warn('[hero]', gl.getShaderInfoLog(s)); return null; } return s; };
+    const vs = mk(gl.VERTEX_SHADER, `
+      attribute vec2 aPos; attribute float aStyle; attribute float aLit;
+      uniform vec2 uSize; uniform vec2 uOrigin; uniform float uScale, uTime, uLive, uDpr;
+      varying float vStyle, vLit;
+      void main() {
+        float sway = uLive * sin(uTime * 2.4 - aPos.x * 4.5) * 0.035 * aPos.x * aPos.x;
+        vec2 p = uOrigin + vec2(aPos.x, aPos.y + sway) * uScale;
+        gl_Position = vec4(p.x / uSize.x * 2.0 - 1.0, 1.0 - p.y / uSize.y * 2.0, 0.0, 1.0);
+        vStyle = aStyle; vLit = aLit;
+        gl_PointSize = (aLit > 0.5 ? 2.4 : (aStyle == 5.0 ? 1.5 : 1.15)) * uDpr;
+      }`);
+    const fs = mk(gl.FRAGMENT_SHADER, `
+      precision mediump float; varying float vStyle, vLit; uniform vec3 uPaper, uBlue;
+      void main() {
+        vec3 c = uPaper; float a = 0.24;
+        if (vLit > 0.5) a = 1.0;
+        else if (vStyle == 5.0) a = 0.95;
+        else if (vStyle == 1.0) { c = uBlue; a = 1.0; }
+        else if (vStyle == 4.0) { c = uBlue; a = 0.6; }
+        else if (vStyle == 2.0) a = 0.2;
+        else if (vStyle == 3.0) a = 0.18;
+        gl_FragColor = vec4(c, a);
+      }`);
+    if (!vs || !fs) return null;
+    const prog = gl.createProgram(); gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+    gl.useProgram(prog);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    const a = (name) => gl.getAttribLocation(prog, name), u = (name) => gl.getUniformLocation(prog, name);
+    return { gl, prog, n: 0, aPos: a('aPos'), aStyle: a('aStyle'), aLit: a('aLit'),
+      uSize: u('uSize'), uOrigin: u('uOrigin'), uScale: u('uScale'), uTime: u('uTime'), uLive: u('uLive'), uDpr: u('uDpr'), uPaper: u('uPaper'), uBlue: u('uBlue'),
+      bPos: gl.createBuffer(), bStyle: gl.createBuffer(), bLit: gl.createBuffer() };
+  }
+  glUpload(G, xy, styles) {
+    const gl = G.gl, n = styles.length;
+    gl.bindBuffer(gl.ARRAY_BUFFER, G.bPos); gl.bufferData(gl.ARRAY_BUFFER, xy, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(G.aPos); gl.vertexAttribPointer(G.aPos, 2, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, G.bStyle); gl.bufferData(gl.ARRAY_BUFFER, styles, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(G.aStyle); gl.vertexAttribPointer(G.aStyle, 1, gl.UNSIGNED_BYTE, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferData(gl.ARRAY_BUFFER, new Uint8Array(n), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(G.aLit); gl.vertexAttribPointer(G.aLit, 1, gl.UNSIGNED_BYTE, false, 0, 0);
+    G.n = n; G.litZero = true;
+  }
+  silhouettePoints() {
+    if (this._sil) return this._sil;
+    const n = this.pts.length, xy = new Float32Array(n * 2), st = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const [x, y, , kind, stripe, ring] = this.pts[i];
+      xy[2 * i] = x; xy[2 * i + 1] = y;
+      st[i] = ring ? 5 : kind === 2 ? 2 : kind === 3 ? (stripe ? 4 : 3) : (stripe ? 1 : 0);
+    }
+    return (this._sil = { xy, styles: st });
   }
   resize() {
     const cv = this.cvRef.current; if (!cv) return;
@@ -306,30 +376,45 @@ class Component extends DCLogic {
   draw() {
     const cv = this.cvRef.current;
     if (cv && this.pts) {
-      const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height, d = devicePixelRatio;
-      ctx.clearRect(0, 0, W, H);
+      if (this.G === undefined) this.G = this.initGL(cv);
+      const W = cv.width, H = cv.height, d = devicePixelRatio;
       const now = performance.now() / 1000, live = this.isLive(), f = this.state.feed;
       const cs = getComputedStyle(cv);
       const paper = cs.getPropertyValue('--color-bg').trim() || '#f2f2f3';
       const blue = cs.getPropertyValue('--color-accent-300').trim() || '#b5d9fd';
       const scale = Math.min(W * 0.92, H * 2.6), ox = (W - scale) / 2, oy = H * 0.5;
-      const real = live && this.layout && this.layout.pts;          // the brain's neurons
-      const mask = real ? this.maskBits(f) : null;
-      const pts = real ? this.layout.pts : this.pts;
-      for (let i = 0; i < pts.length; i++) {
-        const [x, y, kind, stripe, ring] = real ? pts[i] : [pts[i][0], pts[i][1], pts[i][3], pts[i][4], pts[i][5]];
-        const sway = live ? Math.sin(now * 2.4 - x * 4.5) * 0.035 * x * x : 0;
-        const px = ox + x * scale, py = oy + (y + sway) * scale;
-        const fired = mask ? (mask[i >> 3] >> (7 - (i & 7))) & 1 : 0;
-        let r;
-        if (fired) { ctx.fillStyle = paper; ctx.globalAlpha = 1; r = 2.4 * d; }
-        else if (ring) { ctx.fillStyle = paper; ctx.globalAlpha = 0.95; r = 1.5 * d; }
-        else if (stripe) { ctx.fillStyle = blue; ctx.globalAlpha = kind === 3 ? 0.6 : 1; r = 1.15 * d; }
-        else if (kind === 2) { ctx.fillStyle = paper; ctx.globalAlpha = 0.2; r = 1.15 * d; }
-        else { ctx.fillStyle = paper; ctx.globalAlpha = kind === 3 ? 0.18 : 0.24; r = 1.15 * d; }
-        ctx.fillRect(px, py, r, r);
+      const brain = this.layout;            // the brain's own neurons, once loaded
+      if (this.G) {
+        const G = this.G, gl = G.gl;
+        if (brain && brain.pending) { this.glUpload(G, brain.xy, brain.styles); brain.pending = false; this._maskSeq = -1; }
+        else if (!brain && G.n === 0) { const s = this.silhouettePoints(); this.glUpload(G, s.xy, s.styles); }
+        if (brain && live) {
+          const lit = this.unpackMask(f, brain.n);
+          if (lit) { gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, lit); G.litZero = false; }
+        } else if (!G.litZero) { gl.bindBuffer(gl.ARRAY_BUFFER, G.bLit); gl.bufferSubData(gl.ARRAY_BUFFER, 0, new Uint8Array(G.n)); G.litZero = true; }
+        const rgb = (h) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+        gl.viewport(0, 0, W, H); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.uniform2f(G.uSize, W, H); gl.uniform2f(G.uOrigin, ox, oy); gl.uniform1f(G.uScale, scale);
+        gl.uniform1f(G.uTime, now); gl.uniform1f(G.uLive, live ? 1 : 0); gl.uniform1f(G.uDpr, d);
+        gl.uniform3fv(G.uPaper, rgb(paper.length === 7 ? paper : '#f2f2f3')); gl.uniform3fv(G.uBlue, rgb(blue.length === 7 ? blue : '#b5d9fd'));
+        gl.drawArrays(gl.POINTS, 0, G.n);
+      } else {
+        // no WebGL: the same picture with fillRect (fine for thousands, slow for a whole brain)
+        const ctx = cv.getContext('2d'); ctx.clearRect(0, 0, W, H);
+        const src = brain ? brain : this.silhouettePoints(); const n = brain ? brain.n : this.pts.length;
+        const lit = brain && live ? (this.unpackMask(f, n) || this._lit) : null;
+        for (let i = 0; i < n; i++) {
+          const x = src.xy[2 * i], y = src.xy[2 * i + 1], st = src.styles[i];
+          const sway = live ? Math.sin(now * 2.4 - x * 4.5) * 0.035 * x * x : 0;
+          const px = ox + x * scale, py = oy + (y + sway) * scale;
+          const on = lit && lit[i];
+          ctx.fillStyle = (st === 1 || st === 4) && !on ? blue : paper;
+          ctx.globalAlpha = on ? 1 : st === 5 ? 0.95 : st === 1 ? 1 : st === 4 ? 0.6 : st === 2 ? 0.2 : st === 3 ? 0.18 : 0.24;
+          const r = (on ? 2.4 : st === 5 ? 1.5 : 1.15) * d;
+          ctx.fillRect(px, py, r, r);
+        }
+        ctx.globalAlpha = 1;
       }
-      ctx.globalAlpha = 1;
     }
     this.raf = requestAnimationFrame(() => this.draw());
   }
@@ -398,7 +483,7 @@ class Component extends DCLogic {
         { label: 'Supply', value: '1,000,000,000', sub: 'fixed at launch · 1% transfer fee' },
       ],
       behaviors: names.map(([name, key]) => { const r = live ? (rates[key] || 0) : 0; return { name, rate: r.toFixed(1), pct: (live ? Math.min(100, r / rMax * 100) : 0) + '%' }; }),
-      life: [['pages visited', n(stats.pages)],['clicks', n(stats.clicks)],['scrolls', n(stats.scrolls)],['escapes', n(stats.escapes)],['vetoed clicks', n(stats.vetoed)],['brain steps', n(stats.brain_steps)],['where it is', live && f.page && f.page.short ? f.page.short : dash]].map(([name, value]) => ({ name, value, size: name === 'where it is' ? '13px' : '20px', kind: name === 'where it is' ? 'life-url' : 'life-val' })),
+      life: [['pages visited', n(stats.pages)],['clicks', n(stats.clicks)],['scrolls', n(stats.scrolls)],['escapes', n(stats.escapes)],['vetoed clicks', n(stats.vetoed)],['brain steps', n(stats.brain_steps)],['habituation', live && f.brain && f.brain.habituation != null ? Math.round(f.brain.habituation * 100) + ' %' : dash],['where it is', live && f.page && f.page.short ? f.page.short : dash]].map(([name, value]) => ({ name, value, size: name === 'where it is' ? '13px' : '20px', kind: name === 'where it is' ? 'life-url' : 'life-val' })),
       readouts: [
         { group: 'Retina', drives: 'input', body: 'Luminance and optic-flow maps from a live screenshot, injected retinotopically into the ganglion-cell layer.' },
         { group: 'DSGC ×4', drives: 'cursor x · y', body: 'Direction-selective ganglion cells, up/down/left/right. A fish steers by asymmetry, so the difference between opposed pairs drives the cursor.' },
@@ -410,7 +495,8 @@ class Component extends DCLogic {
       plan,
       chain: [['Contract',dash],['Paired',dash],['Creator tax','1% · transfer-fee extension'],['Supply','1,000,000,000 fixed'],['Chain','Solana · Token-2022'],['Venue','pump.fun → Raydium']].map(([k,v]) => ({k,v})),
       honest: [
-        { lead: 'The neurons are synthetic until Fish1 lands.', body: 'Fish1 is still being proofread. What runs today is a 7,000-neuron synthetic brain shaped like the larva — retina, DSGCs, nMLF, vSPN, the Mauthner pair, an integrator pool and a spinal cord, all wired and all firing. Every dot above is one of them. The header always names the graph that is actually running; NOTEPAD.md says how wide day one is.' },
+        { lead: 'The neurons are synthetic until the real connectome lands.', body: 'What runs today is a 7,000-neuron synthetic brain shaped like the larva — retina, DSGCs, nMLF, vSPN, the Mauthner pair, an integrator pool and a spinal cord, all wired and all firing. Every dot above is one of them. The header always names the graph that is actually running; the whole-brain EM reconstruction (187,053 cells, 39 million synapses) is the next step and NOTEPAD.md tracks it.' },
+        { lead: 'The only learning is habituation.', body: 'Short-term synaptic depression on the sensory inputs — the real larval kind: every spike uses a little synaptic resource, it recovers over ~20 s. A held flash stops startling the Mauthner cell, a page stared at for a minute drives the brain less. No reward signal is invented; the habituation row above is that resource, used.' },
         { lead: 'The feed is live only while the fish is running.', body: 'What you see above is streamed from one machine running roam.py. When it is off, this page says asleep; it never replays or invents telemetry.' },
         { lead: 'The words are a narrator.', body: 'The fish has no language. Posts are written by a language model handed real telemetry and live chain numbers; a draft whose numbers are not in that packet is thrown away.' },
         { lead: 'It has no goals.', body: 'No reward circuit feeds back. What you see is reaction, not intent; the goal is set outside and read honestly.' },

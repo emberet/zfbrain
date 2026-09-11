@@ -84,14 +84,19 @@ directly.
 
 ## The honest bit (stated up front)
 
-- The **neurons are synthetic until Fish1 lands.** The full larval-5
-  zebrafish connectome is still being proofread by the research release. What
-  runs today is `build_graph.py --synthetic`: 7,000 LIF neurons laid out in
-  the shape of the larva — retina, four DSGC channels, nMLF, vSPN, the
-  Mauthner pair, a hindbrain integrator pool and a spinal cord — ~50,000
-  signed synapses, every population firing. Every dot on the site's fish is
-  one of them. The header always names the graph that is running, and it will
-  say "Fish1" the day `build_graph.py` runs on the real CSVs.
+- The **neurons are synthetic until the real connectome lands.** What runs
+  today is `build_graph.py --synthetic`: 7,000 LIF neurons laid out in the
+  shape of the larva — retina, four DSGC channels, nMLF, vSPN, the Mauthner
+  pair, a hindbrain integrator pool and a spinal cord — ~59,000 signed
+  synapses, every population firing. Every dot on the site's fish is one of
+  them. The target is the Harvard/Google 7 dpf whole-brain EM reconstruction
+  (187,053 cells, 39 M synapses, 21 M with polarity); `fetch_cave.py` pulls
+  it, the simulator already runs at that scale (`fishsim.py --bench 180000`),
+  and the header will name it the day it is in.
+- The **only learning is habituation**: short-term synaptic depression on the
+  sensory inputs, the real larval kind. A held flash stops startling the
+  Mauthner cell; a page stared at for a minute drives the brain less. No
+  reward signal is invented.
 - The **feed is live only while the fish is running** on one machine. Off, the
   page says asleep.
 - The **words are a narrator**, not the brain's language. Every post is

@@ -12,7 +12,8 @@ Everything the fish just did is published, in-process, on 127.0.0.1:4660:
     GET /state      the heartbeat (JSON, see heartbeat() for the shape)
     GET /frame.jpg  what the fish is looking at right now (640x400 JPEG)
     GET /events     the same heartbeat as a Server-Sent-Events stream (~2 Hz)
-    GET /graph      every neuron's position + population (once per page load)
+    GET /graph      the running graph: counts, populations, where the layout is
+    GET /graph.bin  every neuron's position + population, binary (once per page load)
     GET /healthz    200 while the process is up
 
 bin/tunnel.sh puts that behind https://live.zfbrain.online; the site
@@ -142,15 +143,27 @@ class Roamer:
 
     def _graph_doc(self):
         """What the site draws: every neuron's position and population. Built
-        once; the day Fish1 replaces the synthetic layout this changes with it."""
+        once. /graph is the small JSON description; /graph.bin is the layout —
+        float32 (x, y) per neuron in the fish frame (x 0..1 head->tail, y
+        up-negative) followed by a uint16 population id per neuron. The
+        synthetic graph is already in that frame; a real EM volume gets
+        projected to the lateral view here, so the page never changes."""
         names = sorted(self.groups)
-        gid = np.full(self.sim.n, -1, dtype=np.int16)
+        gid = np.full(self.sim.n, 65535, dtype=np.uint16)
         for i, name in enumerate(names):
             gid[np.asarray(self.groups[name], dtype=np.int64)] = i
-        coords = np.asarray(self.sim.coords, dtype=np.float64)
+        xy = np.asarray(self.sim.coords, dtype=np.float32)[:, :2].copy()
+        if self.meta.get("source") not in ("synthetic", "smoke"):
+            # lateral projection of real somata into the fish frame: x along
+            # the body, y dorso-ventral, both normalised to the drawn silhouette
+            lo, hi = xy.min(axis=0), xy.max(axis=0)
+            span = np.maximum(hi - lo, 1e-6)
+            xy[:, 0] = (xy[:, 0] - lo[0]) / span[0]
+            xy[:, 1] = (xy[:, 1] - lo[1]) / span[1] * 0.26 - 0.13
+        self.graph_bin = xy.astype("<f4").tobytes() + gid.astype("<u2").tobytes()
         doc = {"n": int(self.sim.n), "label": self.meta["label"], "source": self.meta.get("source"),
-               "built_at": self.meta.get("built_at"), "groups": names, "group": gid.tolist(),
-               "coords": [[round(float(x), 4), round(float(y), 4)] for x, y in coords[:, :2]]}
+               "built_at": self.meta.get("built_at"), "synapses": self.meta.get("synapses"),
+               "groups": names, "layout": "/graph.bin", "layout_bytes": len(self.graph_bin)}
         return json.dumps(doc, separators=(",", ":")).encode()
 
     def _require_groups(self):
@@ -348,6 +361,7 @@ class Roamer:
                 "spikes_per_sec": detail["spikes_per_sec"],
                 "mean_membrane_mv": detail["mean_membrane_mv"],
                 "firing": detail["firing_recent"],          # spiked in the last 5 ms
+                "habituation": detail["habituation"],       # sensory synaptic resource used, 0-1
                 "rates_hz": detail["rates_hz"],
                 "firing_mask": detail["firing_mask"],       # one bit per neuron, base64
             }
@@ -472,6 +486,10 @@ def make_handler(roamer):
                 self._send(200, roamer.graph_doc, "application/json",
                            cache="public, max-age=300",
                            extra=[("ETag", f'"{roamer.meta.get("built_at", "0")}"')])
+            elif path == "/graph.bin":
+                self._send(200, roamer.graph_bin, "application/octet-stream",
+                           cache="public, max-age=86400",
+                           extra=[("ETag", f'"{roamer.meta.get("built_at", "0")}-bin"')])
             elif path == "/frame.jpg":
                 _, frame, seq = feed.snapshot()
                 if not frame:
