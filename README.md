@@ -2,9 +2,10 @@
 
 A living **larval-5 zebrafish connectome** on the open internet, funded with its
 own memecoin. It reads pages through a retinotopic retina, steers itself through
-a real browser, and — when told to — launches **$ZFBRAIN** on Solana through
-**pump.fun**. The site, **zfbrain.online**, shows what the fish is looking at
-right now.
+a real browser, and reads its own token's numbers back off Solana. **$ZFBRAIN**
+is live on **pump.fun** —
+`9eciHjJopku15zkke5GGdpPdfsDTqsfhQA9EibrApump` — launched by hand, not by the
+fish. The site, **zfbrain.online**, shows what the fish is looking at right now.
 
 ## Quickstart (everything honest, nothing broadcast by default)
 
@@ -112,9 +113,11 @@ directly.
   thrown away.
 - **There is no internal goal.** No reward circuit feeds back; the goal is set
   outside and read honestly.
-- **The launch rig completes the form.** The brain fills fields by texture and
-  lands clicks through its real circuits; paired asset, tax and handle come
-  from config, and `live.json` labels which was which.
+- **The fish did not launch the token. A person did.** `sollive.py` can sign
+  and simulate a mainnet transaction; it has never been able to build a
+  pump.fun create instruction — read it. $ZFBRAIN was created by hand on
+  pump.fun. The mint is real and the site reads its numbers back off chain;
+  the claim that the animal did it would not be.
 - **$ZFBRAIN is an art experiment, not an investment.** Read the chain (Solscan
   / Solana Explorer) rather than taking this page's word.
 
@@ -132,8 +135,16 @@ voice.py         the narrator (observe -> read -> draft -> number-check -> post)
 
 ## The memecoin half (pump.fun on Solana)
 
-- **Token-2022** with a **transfer-fee extension** — the tax is a real chain
-  protocol fee, in basis points, set at create.
+- **Live since 2026-09-12**: `9eciHjJopku15zkke5GGdpPdfsDTqsfhQA9EibrApump`, a **Token-2022** mint — name "Zebra
+  Fish", ticker ZFBRAIN, 6 decimals, supply 1,000,000,000, mint / freeze /
+  update authority all revoked. Its only extensions are `metadataPointer` and
+  `tokenMetadata`: **there is no transfer fee**, so nothing takes a cut of a
+  transfer. Earlier drafts of this repo planned a 1% transfer-fee extension
+  (`ZF_SOL_TAX`); that is not what was minted, and the site says so.
+- The fish's wallet (`FDWcKEJjLbYP8bMrZ4XaR5uwbS1VFkzbVtw3wcxJys4t`) holds
+  part of the supply; `roam.py` reads the balance, the bag and the supply off
+  the public RPC once a minute and the site shows those numbers, not stored
+  ones.
 - `solkeygen.py` creates the Solana wallet (Ed25519, base58; **seed never
   echoed, address printed only**).
 - `sollive.py` is the **only** module that can broadcast to mainnet — gated by

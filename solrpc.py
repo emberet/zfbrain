@@ -10,8 +10,9 @@ out as the `api-key` header.
 
 Every call here is read-only except send_raw / simulate, which are only
 reached by soldryrun.py (devnet, free) or sollive.py (ZF_SOL_LIVE=1). Fees
-are SOL in lamports; a Token-2022 transfer-fee is a protocol-level % on each
-transfer, configured at mint time, the honest analog of the fly's tax.
+are SOL in lamports. A Token-2022 mint *can* carry a transfer-fee extension —
+a protocol-level % on each transfer, fixed at create — but $ZFBRAIN does not:
+its extensions are metadataPointer and tokenMetadata, nothing else.
 """
 
 import os
@@ -92,3 +93,22 @@ def send_raw(raw_b58):
     """Only ever reached by sollive.py after ZF_SOL_LIVE=1. Takes base58."""
     return _call("sendTransaction", [raw_b58, {"encoding": "base58",
                                                "skipPreflight": True}])
+
+
+def get_token_supply(mint_b58):
+    """Circulating supply of a mint, as {amount, decimals, uiAmount}."""
+    return _call("getTokenSupply", [mint_b58, {"commitment": "confirmed"}])["value"]
+
+
+def get_token_balance(owner_b58, mint_b58):
+    """How much of one mint an address holds, summed over its token accounts.
+    Works for Token-2022 and the old program alike: the filter is the mint, not
+    the program. Returns a float in whole tokens, 0.0 when it holds none."""
+    res = _call("getTokenAccountsByOwner",
+                [owner_b58, {"mint": mint_b58},
+                 {"commitment": "confirmed", "encoding": "jsonParsed"}])["value"]
+    total = 0.0
+    for acc in res:
+        info = acc["account"]["data"]["parsed"]["info"]["tokenAmount"]
+        total += float(info.get("uiAmount") or 0.0)
+    return total

@@ -55,6 +55,12 @@ import solrpc
 from fishsim import FishSim, load_graph
 from retina import Retina
 
+# $ZFBRAIN, launched 2026-09-12: a Token-2022 mint on Solana mainnet, and the
+# address that holds the fish's own bag. Both are public; the seed that signs
+# for the wallet lives in .env and is never read here — this file only reads.
+MINT = os.environ.get("ZF_SOL_MINT", "9eciHjJopku15zkke5GGdpPdfsDTqsfhQA9EibrApump")
+WALLET = os.environ.get("ZF_SOL_PUBKEY", "FDWcKEJjLbYP8bMrZ4XaR5uwbS1VFkzbVtw3wcxJys4t")
+
 DEFAULT_ALLOWLIST = [
     "wikipedia.org", "wikimedia.org", "wikisource.org", "gutenberg.org",
     "openlibrary.org", "arxiv.org", "xkcd.com",
@@ -187,7 +193,8 @@ class Roamer:
         self._cam_page = None      # the page the camera is pointed at
         self._heading = (0.0, 0.0) # the direction the last thought chose
         self._last = None          # (detail, dec, out) so a camera tick can republish
-        self._chain = {"network": "mainnet", "slot": None, "at": 0.0}
+        self._chain = {"network": "mainnet", "slot": None, "at": 0.0,
+                       "mint": MINT, "supply": None, "sol": None, "bag": None}
         self.graph_doc = self._graph_doc()
         threading.Thread(target=self._chain_loop, daemon=True).start()
 
@@ -240,12 +247,26 @@ class Roamer:
         self.events.append({"t": round(time.time(), 2), "kind": kind, "msg": msg})
 
     def _chain_loop(self):
-        """One honest chain number for the header: the current mainnet slot."""
+        """What the site reads off the chain: the current mainnet slot every
+        10 s, and the token's own numbers every minute — supply, the fish's SOL,
+        and the fish's own bag. All read-only, all from the public RPC, so
+        anything the page shows can be checked against the same mint."""
+        slow = 0.0
         while True:
             try:
-                self._chain = {"network": "mainnet",
-                               "slot": solrpc.get_slot(url=solrpc.MAINNET),
-                               "at": time.time()}
+                chain = dict(self._chain)
+                chain.update(network="mainnet", at=time.time(),
+                             slot=solrpc.get_slot(url=solrpc.MAINNET))
+                now = time.time()
+                if MINT and now - slow > 60:
+                    sup = solrpc.get_token_supply(MINT)
+                    chain["mint"] = MINT
+                    chain["supply"] = float(sup.get("uiAmount") or 0.0)
+                    chain["sol"] = solrpc.get_balance(WALLET) / 1e9
+                    chain["bag"] = solrpc.get_token_balance(WALLET, MINT)
+                    chain["chain_at"] = now
+                    slow = now
+                self._chain = chain
             except Exception:  # noqa: BLE001 — keep the last value, age grows
                 pass
             time.sleep(10)
@@ -570,7 +591,9 @@ class Roamer:
             "stats": dict(self.stats),
             "events": list(self.events),
             "chain": {"network": chain["network"], "slot": chain["slot"],
-                      "age_s": round(now - chain["at"]) if chain["slot"] else None},
+                      "age_s": round(now - chain["at"]) if chain["slot"] else None,
+                      "mint": chain.get("mint"), "supply": chain.get("supply"),
+                      "sol": chain.get("sol"), "bag": chain.get("bag")},
         }
         if out is not None:
             lum = out["luminance"]

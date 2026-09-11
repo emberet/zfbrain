@@ -94,20 +94,27 @@ the Dec-2027 paper embargo; Fish-X has the retina in the volume.)
 - [x] `python sollive.py --sim` signs a real 0-lamport self-transfer and
       simulates it on mainnet: OK, nothing broadcast; `--send` refuses
       without `ZF_SOL_LIVE=1`.
-- [ ] The real create: `sollive.py` still signs only a probe. Build the actual
-      pump.fun create instruction (Token-2022, transfer-fee `ZF_SOL_TAX` bps)
-      and simulate it before anything else.
-- [ ] Choose ticker/name/description. Default scaffold is **ZFBRAIN /
-      "Zebrafish Connectome"**. Use a handle YOU own.
-- [ ] Dry-run once with a test token; keep it off the real name. Check the
-      on-screen log labels "by fish / by rig".
-- [ ] Live launch. Wait for the receipt **on camera**. Read it on Solscan
-      yourself. Then set the contract address in `site/index.html`
-      (`contract` in renderVals) and in the heartbeat.
-- [ ] Update the README "what is not real" for whatever the fish actually
-      didn't do itself — that list is the whole point, don't soften it.
-- [ ] Token bootstrapping is the creator's call. Pair, tax (1%), supply
-      1,000,000,000 fixed at launch — mirror the fly.
+- [ ] The real create: `sollive.py` still signs only a probe — it never gained
+      a pump.fun create instruction, and the launch below did not go through
+      it. If the fish is ever to launch anything itself, this is still the
+      missing piece.
+- [x] Name/ticker chosen: **"Zebra Fish" / ZFBRAIN**, handle @zfbraindev.
+- [x] **Launched 2026-09-12, by hand on pump.fun — not by the fish.**
+      Mint `9eciHjJopku15zkke5GGdpPdfsDTqsfhQA9EibrApump`, Token-2022,
+      6 decimals, supply 1,000,000,000, mint + freeze + update authority
+      revoked, extensions `metadataPointer` + `tokenMetadata` only, so
+      **no transfer fee** (the planned 1% / `ZF_SOL_TAX` never happened).
+      Metadata on IPFS. Verify before quoting any of this:
+      `python -c "import solrpc,json;print(json.dumps(solrpc._call('getAccountInfo',['9eciHjJopku15zkke5GGdpPdfsDTqsfhQA9EibrApump',{'encoding':'jsonParsed'}]),indent=2))"`
+- [x] Site filled: `MINT` in `site/index.html` feeds the contract row, the copy
+      button, the pump.fun / Solscan / Explorer links, step 07 and the
+      phase label; the band reads SOL, bag, share and supply out of
+      `/state`'s chain block, which `roam.py` refreshes every 60 s.
+- [x] README's "what is not real" now says plainly that a person launched it.
+      That list is the whole point — don't soften it.
+- [ ] Whether the fish's bag is ever spent, and on what, is the creator's call
+      and nothing in this repo can do it: no module holds a swap or transfer
+      instruction.
 
 ## 6 · Voice
 - [ ] **[HW]** `ANTHROPIC_API_KEY` in `.env` (voice.py uses the Anthropic SDK;

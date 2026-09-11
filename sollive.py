@@ -1,19 +1,25 @@
-"""Mainnet launch driver — the ONLY thing that can spend real SOL.
+"""Mainnet signing rig — the ONLY thing here that can spend real SOL.
+
+What it actually builds is a **0-lamport transfer from the wallet to itself**
+(`launch_probe`). That is the whole transaction. It proves the seed signs, the
+blockhash is fresh and the RPC accepts the tx; it creates nothing.
+
+It has never contained a pump.fun create instruction. `PUMP_FUN` is a constant
+nothing references. So $ZFBRAIN — launched 2026-09-12, mint
+9eciHjJopku15zkke5GGdpPdfsDTqsfhQA9EibrApump — was **not** created by this
+module or by the fish: a person created it by hand on pump.fun. The site says
+so in its own words; don't let this docstring drift back into implying
+otherwise. Building the real create instruction is still open work (NOTEPAD §5).
 
 Guards, from most to least boring:
 
-  1. ZF_SOL_LIVE=1            the flag that says "I am the actual on-chain
-                              creature now"; without it --send is refused
+  1. ZF_SOL_LIVE=1            without it --send is refused
   2. .env has SOL_PRIVATE_KEY (created by solkeygen.py; address PRINTED only)
   3. simulateTransaction first — shows the outcome with zero broadcast
-  4. prints the tx id; the receiver is the pump.fun bonding curve
-
-This module NEITHER mints the coin NOR picks the tax — pump.fun sets the
-curve, the transfer fee is the Token-2022 extension. We only: fund, simulate,
-and (with ZF_SOL_LIVE=1) send.
+  4. prints the tx id
 
 python sollive.py --sim    # full mainnet rig, nothing broadcast (free)
-python sollive.py --send   # broadcast the launch (requires ZF_SOL_LIVE=1)
+python sollive.py --send   # broadcast the probe (requires ZF_SOL_LIVE=1)
 """
 
 import argparse
