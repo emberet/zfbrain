@@ -36,10 +36,34 @@ Flags gate everything and all are **off by default** (copy `.env.example` to
 | `ZF_ALLOW_BROWSER=1` | lets `roam.py` open a headless Chromium against real sites |
 | `ZF_SOL_LIVE=1` | lets `sollive.py --send` broadcast a real mainnet transaction |
 | `ZF_SITE_LIVE=1` | lets `zfsite.py --deploy` publish `site/` to zfbrain.online |
+| `ZF_ROAM_OPEN=1` | takes the domain allowlist **off** — the fish goes wherever a link leads |
 
 There is no other path. `soldryrun.py` forces devnet before its first RPC call
 and cannot reach the broadcast path; `sollive.py` simulates first, always, and
 refuses `--send` without the gate.
+
+### Where it is allowed to be
+
+The fish has no keyboard. It cannot search: every page it has ever seen was
+reached by clicking a link near its cursor, so where it goes is decided by
+`HOME_SEEDS` (24 pages it starts lives on) and, when the fence is up, by
+`DEFAULT_ALLOWLIST` (41 domains — reference and museums, fish and brain
+science, and the coin's own venues). Domains match by suffix, so `arxiv.org`
+accepts `arxiv.org` and `www.arxiv.org` but not `arxiv.org.example.com`.
+
+`ZF_ROAM_OPEN=1` removes that fence. **It does not remove the floor**, which
+applies either way and cannot be configured off:
+
+- the private network — `localhost`, `127/8`, `10/8`, `192.168/16`,
+  `172.16–31`, `169.254`, `*.local`. The feed server is itself on
+  `127.0.0.1:4660`, and a screenshot of a machine on your LAN would be
+  published to a public page.
+- `file:`, `chrome:`, `chrome-extension:`, `devtools:`, `view-source:`
+- a short `BLOCK_HOSTS` deny-list (override with `ZF_BLOCKLIST`) for
+  categories that must not appear on a public feed at all.
+
+A link's destination is checked **before** the click, not after: a page that is
+merely navigated away from has already been screenshotted and published once.
 
 ## Live (what the site shows)
 

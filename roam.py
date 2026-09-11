@@ -61,23 +61,71 @@ from retina import Retina
 MINT = os.environ.get("ZF_SOL_MINT", "9eciHjJopku15zkke5GGdpPdfsDTqsfhQA9EibrApump")
 WALLET = os.environ.get("ZF_SOL_PUBKEY", "FDWcKEJjLbYP8bMrZ4XaR5uwbS1VFkzbVtw3wcxJys4t")
 
+# Where the fish is allowed to be when the fence is up (ZF_ROAM_OPEN=0).
+# It has no keyboard, so it cannot search: everything it ever sees is reached
+# by clicking a link near its cursor. That makes two properties matter more
+# than subject matter — pages have to be link-rich, or a life dead-ends, and
+# picture-dense, because the retina is luminance and optic flow and a wall of
+# body text barely drives it.
 DEFAULT_ALLOWLIST = [
-    "wikipedia.org", "wikimedia.org", "wikisource.org", "gutenberg.org",
-    "openlibrary.org", "arxiv.org", "xkcd.com",
+    # reference, libraries, museums — deep link graphs, lots of images
+    "wikipedia.org", "wikimedia.org", "wikisource.org", "wiktionary.org",
+    "gutenberg.org", "standardebooks.org", "openlibrary.org", "archive.org",
+    "loc.gov", "si.edu", "metmuseum.org", "nga.gov", "rijksmuseum.nl",
+    "europeana.eu", "publicdomainreview.org", "openstreetmap.org",
+    "developer.mozilla.org", "nasa.gov", "xkcd.com",
+    # its own kind: fish, brains, connectomes
+    "zfin.org", "mapzebrain.org", "fishbase.se", "fishbase.org", "eol.org",
+    "biorxiv.org", "arxiv.org", "ncbi.nlm.nih.gov", "elifesciences.org",
+    "plos.org", "openworm.org", "flywire.ai", "microns-explorer.org",
+    # its own coin. Reachable, but never a seed — see HOME_SEEDS.
     "pump.fun", "raydium.io", "solscan.io", "explorer.solana.com",
+    "solana.com", "dexscreener.com", "birdeye.so", "jup.ag", "coingecko.com",
 ]
+
+# Refused whatever the fence says. Two jobs, and the allowlist was quietly
+# doing both until it came down:
+#   1. the private network. A link to 127.0.0.1 or a box on the LAN would be
+#      screenshotted onto a public page; /state itself lives on 127.0.0.1:4660.
+#   2. categories that must not appear on a public feed at all.
+BLOCK_HOSTS = [
+    "localhost", "0.0.0.0", "169.254.", "metadata.google.internal",
+    "pornhub.com", "xvideos.com", "xhamster.com", "onlyfans.com",
+    "redtube.com", "youporn.com", "xnxx.com", "liveleak.com",
+    "thepiratebay.org", "1337x.to", "rarbg.to", "nyaa.si",
+    "whitepages.com", "spokeo.com", "beenverified.com", "truepeoplesearch.com",
+    "fastpeoplesearch.com", "radaris.com", "intelius.com",
+]
+BLOCK_SCHEMES = ("file:", "chrome:", "chrome-extension:", "devtools:", "view-source:")
 HOME_SEEDS = [
     # the fish starts a fresh life at a random one of these, then wanders.
-    # no captcha-walled sites here (solscan etc.) — they freeze the browser.
+    # no captcha-walled sites here (solscan, dexscreener etc.) — they freeze
+    # the browser, and a life that *starts* on one usually dies before its
+    # first hop. Reaching them by wandering is fine; starting on them is not.
     "https://en.wikipedia.org/wiki/Zebrafish",
     "https://en.wikipedia.org/wiki/Fish",
-    "https://www.gutenberg.org/",
-    "https://openlibrary.org/",
-    "https://arxiv.org/list/q-bio.NC/recent",
-    "https://xkcd.com/",
     "https://en.wikipedia.org/wiki/Aquarium",
+    "https://commons.wikimedia.org/wiki/Category:Underwater_photographs",
+    "https://www.gutenberg.org/",
+    "https://standardebooks.org/ebooks",
+    "https://openlibrary.org/",
     "https://archive.org/",
     "https://en.wikisource.org/",
+    "https://xkcd.com/",
+    "https://publicdomainreview.org/collections/",
+    "https://www.metmuseum.org/art/collection",
+    "https://www.nga.gov/collection.html",
+    "https://www.loc.gov/free-to-use/",
+    "https://www.si.edu/explore",
+    "https://science.nasa.gov/solar-system/",
+    "https://www.openstreetmap.org/",
+    "https://arxiv.org/list/q-bio.NC/recent",
+    "https://www.biorxiv.org/collection/neuroscience",
+    "https://zfin.org/",
+    "https://mapzebrain.org/",
+    "https://eol.org/",
+    "https://elifesciences.org/subjects/neuroscience",
+    "https://www.microns-explorer.org/",
 ]
 HOME = HOME_SEEDS[0]  # fallback only; _new_life picks a random seed
 VETO_WORDS = (
@@ -101,6 +149,53 @@ DEFAULT_ORIGINS = ("https://zfbrain.online,https://www.zfbrain.online,"
 
 def _env_flag(name):
     return os.environ.get(name, "0").strip() in ("1", "true", "yes")
+
+
+def _host_matches(host, domains):
+    """Suffix match, not substring. `"arxiv.org" in host` also accepts
+    arxiv.org.example.com, which is a free pass for anyone who wants the fish
+    on their page; a fence worth having compares labels."""
+    for d in domains:
+        d = d.strip().lower().lstrip(".")
+        if d and (host == d or host.endswith("." + d)):
+            return True
+    return False
+
+
+def _is_private_host(host):
+    """The RFC1918 / loopback / link-local space. The feed server itself is on
+    127.0.0.1:4660, so this is not hypothetical."""
+    host = host.split(":", 1)[0]
+    if host in ("localhost", "0.0.0.0", "::1", "[::1]") or host.endswith(".local"):
+        return True
+    parts = host.split(".")
+    if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+        a, b = int(parts[0]), int(parts[1])
+        return (a == 127 or a == 10 or a == 0
+                or (a == 192 and b == 168)
+                or (a == 172 and 16 <= b <= 31)
+                or (a == 169 and b == 254))
+    return False
+
+
+def blocked_url(url):
+    """Why this url is refused, or None. Applies with the fence up OR down —
+    ZF_ROAM_OPEN takes the allowlist off, not the floor out."""
+    if not url:
+        return None
+    low = url.strip().lower()
+    for scheme in BLOCK_SCHEMES:
+        if low.startswith(scheme):
+            return f"{scheme.rstrip(':')} scheme"
+    host = urlsplit(url).netloc.lower()
+    if not host:
+        return None            # about:blank is handled as a blank page, not a block
+    if _is_private_host(host):
+        return "private network"
+    deny = [d for d in os.environ.get("ZF_BLOCKLIST", ",".join(BLOCK_HOSTS)).split(",") if d.strip()]
+    if _host_matches(host.split(":", 1)[0], deny):
+        return "blocklist"
+    return None
 
 
 def _short_url(url):
@@ -315,7 +410,7 @@ class Roamer:
                        if (b.width === 0 && b.height === 0) continue;
                        const x = b.left + b.width / 2, y = b.top + b.height / 2;
                        const d = Math.hypot(x - cx, y - cy);
-                       if (d <= r) scored.push({x, y, d, t});
+                       if (d <= r) scored.push({x, y, d, t, href: url.href});
                      }
                      scored.sort((a, b) => a.d - b.d);
                      return scored; }""",
@@ -324,6 +419,13 @@ class Roamer:
             return False
         for link in near:
             x, y = int(link["x"]), int(link["y"])
+            # check the destination before going there, not after: a refused
+            # page that is merely navigated away from has already been
+            # screenshotted and published once
+            why = blocked_url(link.get("href"))
+            if why:
+                self._event("fence", f"link refused before the click · {why}")
+                continue
             if self.veto(page, x, y):
                 continue
             try:
@@ -677,10 +779,15 @@ class Roamer:
                     while h > 0:
                         _, h = self.step(page, h)
                         host = urlsplit(page.url).netloc.lower()
+                        why = blocked_url(page.url)
                         if not host:  # about:blank and friends — nothing to see
                             self._event("fence", "blank page · back to seed")
                             self._go_seed(page, self._seed, "fence: blank")
-                        elif not open_fence and not any(d in host for d in allow):
+                        elif why:
+                            # the floor: refused whether the fence is up or down
+                            self._event("fence", f"{host} refused · {why}")
+                            self._go_seed(page, self._seed, f"fence: {why}")
+                        elif not open_fence and not _host_matches(host.split(":", 1)[0], allow):
                             self._event("fence", f"{host} is off the allowlist · back to seed")
                             self._go_seed(page, self._seed, "fence: allowlist")
                         elif self._is_captcha_page(page):
