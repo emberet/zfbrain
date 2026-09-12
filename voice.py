@@ -39,6 +39,20 @@ SYSTEM = ("You write first-person journal entries for a simulated larval "
           "never use trading or hype language, and write 1-3 quiet sentences. "
           "Reply with the entry text only.")
 
+# The same narrator, pointed at one stimulus instead of a day. The extra rule
+# is the one the site's #honest section already makes: the fish has no
+# language, so a visitor's message reached it as light on an 18x12 retina and
+# nothing about the reply may suggest it was read or understood.
+REPLY_SYSTEM = (
+    "A visitor showed a simulated larval zebrafish a short message by drawing "
+    "it on a page and drifting it across the animal's retina. You are given "
+    "that message and the measured reaction of its neurons. Describe what the "
+    "neurons did, in one or two quiet sentences, in the third person. You are "
+    "the narrator, not the fish. The fish has no language: never say or imply "
+    "that it read, understood, recognised or replied to the message — it saw "
+    "light and motion. Never invent a number that is not in the packet. No "
+    "trading or hype language. Reply with the sentence only.")
+
 
 def load_dotenv(path=".env"):
     """Fill os.environ from .env for keys not already set (bin/*.sh source it;
@@ -89,16 +103,22 @@ class Voice:
 
     # -- write -------------------------------------------------------------
     def draft(self, packet, pages):
-        import anthropic
-
         user = f"Packet:\n{json.dumps(packet, default=str)[:6000]}\n\n"
         user += f"Reference pages:\n{''.join(pages)[:6000]}\n\nWrite the entry."
+        return self._ask(SYSTEM, user)
+
+    def _ask(self, system, user):
+        """One call to the model, with every failure named rather than raised —
+        the loop and the talk thread both have to survive a bad key, a rate
+        limit or a dead network without stopping."""
+        import anthropic
+
         try:
             client = anthropic.Anthropic()  # ANTHROPIC_API_KEY, or an `ant auth login` profile
             r = client.messages.create(
                 model=os.environ.get("ZF_VOICE_MODEL", "claude-sonnet-5"),
                 max_tokens=1024,
-                system=SYSTEM,
+                system=system,
                 messages=[{"role": "user", "content": user}])
         except anthropic.AuthenticationError:
             print("draft: no valid ANTHROPIC_API_KEY — set it in .env")
@@ -133,6 +153,24 @@ class Voice:
         if TRADING_WORDS.search(text):
             return "trading language"
         return None
+
+    # -- talk.py's layer 3 ---------------------------------------------------
+    def reply(self, packet):
+        """One narrator sentence about what the neurons did when a visitor's
+        message was shown to them. Same checker as the journal: a sentence
+        containing a number that is not in the reaction packet is thrown away
+        rather than nudged into compliance, so the page can only ever show
+        numbers the run actually produced."""
+        user = (f"Packet:\n{json.dumps(packet, default=str)[:4000]}\n\n"
+                "Write the sentence.")
+        text = self._ask(REPLY_SYSTEM, user)
+        if text is None:
+            return None
+        reason = self.check(text, packet)
+        if reason:
+            print(f"reply REJECTED ({reason}): {text}")
+            return None
+        return text
 
     # -- one entry -----------------------------------------------------------
     def entry(self, dry=False, force_post=False):

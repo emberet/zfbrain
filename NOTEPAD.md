@@ -307,6 +307,56 @@ changes the graph the live fish loads.
 - [ ] Add the $ZFBRAIN contract + explorer link once launched.
 - [ ] Keep the honest list green. Every "what is not real" claim must stay true.
 
+## 7b · Being shown something — the talk channel, 2026-09-13
+The ask was "a section where the fish can talk to people". A chat box would
+have been the first untrue thing on the page: `#honest` item 5 says the fish
+has no language, and it doesn't. So the reply is **telemetry, not speech**.
+
+A visitor's message is *drawn* (PIL, never HTML — no parser on the path, so
+there is nothing to inject into) onto a page-sized canvas rendered taller than
+the viewport, and a viewport-sized window **drifts** down it across ~6 thoughts.
+The drift matters: a still image makes zero optic flow after frame one, and a
+fish with no flow has nothing to say. That is how an optomotor stimulus is
+actually shown to a larva. The retina is 18x12, so a message arrives as
+**216 numbers** of light — the same 216 it gets from every other page — and the
+section says so in those words.
+
+Three layers, most honest first:
+1. the measured reaction (DSGC / nMLF / vSPN / Mauthner peaks, mean Hz, whether
+   the decode produced a bout, a turn or a startle). This *is* the answer.
+2. `talk.line()` — a deterministic template over exactly those numbers. No
+   model, no key, cannot invent. **Works with `ANTHROPIC_API_KEY` unset**, which
+   is the point: layers 1-2 are not [HW]-blocked.
+3. a narrator sentence via `voice.Voice.reply()`, the *existing* `check()`
+   verbatim (a number not in the packet kills the draft), filled in afterwards
+   on a background thread so the sim never waits on an API call, and labelled
+   NARRATOR on the page. **[HW]-blocked on `ANTHROPIC_API_KEY`; absent silently
+   without it.**
+
+- [x] `talk.py` (inbox, ring, rate limits, `render`, `line`, narrator thread);
+      `Roamer._greet()` + call site between hops in `run()`; `GET /talk`;
+      `POST /say` — the **first inbound path this process has ever had**.
+- [x] Off by default. Without `ZF_TALK=1`, `/say` and `/talk` 404, `/state` has
+      no `talk` key, `do_OPTIONS` advertises `GET, OPTIONS`, and `_greet` is
+      never reached. Verified 2026-09-13.
+- [x] `_greet()` never touches the Playwright page — no `goto`, no click, no
+      mouse. The fence, the allowlist and the click veto are untouched, and the
+      whole visitor path is testable without a browser.
+- [x] Only `talk.state()` (a seq counter + queue depth) rides the heartbeat; the
+      transcript is fetched from `/talk` when that seq moves. The heartbeat goes
+      to up to 200 SSE clients several times a second and stays pure.
+- [x] Abuse surface: 120 chars, charset allowlist, URL rejection, one message
+      per IP per 60 s, one greeting per 20 s globally (browsing stays the
+      default), inbox cap 8, ring 8 and in-memory only, 2 KB body cap checked
+      before the body is read.
+- [x] New `#honest` item — *"It cannot read your message."* — so the page states
+      the limit itself instead of letting the section imply otherwise.
+- [ ] **[HW]** Flip `ZF_TALK=1` on the live fish (launchd plist) and redeploy
+      the site when you want this public. Nothing is live until you do.
+- [ ] If launch day needs edge-side abuse protection, this shape takes a Pages
+      Function with Turnstile in front of `/say` without changing any of the
+      above. Not added — there is no backend today.
+
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
       gentle anti-founder-mode behavior.
