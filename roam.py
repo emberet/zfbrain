@@ -17,13 +17,6 @@ Everything the fish just did is published, in-process, on 127.0.0.1:4660:
     GET /graph.bin  every neuron's position (3-D) + population, binary
     GET /firing.bin?seq=N  which neurons fired in the last 5 ms, one bit each
     GET /healthz    200 while the process is up
-    GET /talk       the last few visitor messages and what the brain did (ZF_TALK=1)
-    POST /say       show the fish a short message (ZF_TALK=1; see talk.py)
-
-/say is the only inbound path this process has ever had, and it is off unless
-ZF_TALK=1. It does not navigate, click or type anything: the message is drawn
-onto a canvas and drifted across the retina, so a visitor's string reaches the
-neurons as light and reaches nothing else.
 
 bin/tunnel.sh puts that behind https://live.zfbrain.online; the site
 subscribes to it and shows the honest "asleep" state when nothing answers.
@@ -59,7 +52,6 @@ import numpy as np
 from PIL import Image
 
 import solrpc
-import talk as talkmod
 from fishsim import FishSim, load_graph
 from retina import Retina
 
@@ -151,10 +143,6 @@ SIM_STEPS = 400                   # 400 x 0.5 ms = 0.2 s of biological time per 
 CAM_FPS = float(os.environ.get("ZF_CAM_FPS", "6"))
 CAM_SLICE = 25                    # brain steps between camera checks (~12 ms of thought)
 SEC_PER_THOUGHT = 1.0             # how long a heading is swum out over, wall-clock
-GREET_THOUGHTS = 6                # ~1.2 s of biological time a visitor's message is held up for
-GREET_DRIFT = 220                 # px it slides past the viewport in that time — a still
-                                  # image makes no optic flow, and a drifting one is how an
-                                  # optomotor stimulus is actually shown to a larva
 DEFAULT_ORIGINS = ("https://zfbrain.online,https://www.zfbrain.online,"
                    "https://zfbrain.pages.dev,http://localhost:8787")
 
@@ -302,28 +290,8 @@ class Roamer:
         self._last = None          # (detail, dec, out) so a camera tick can republish
         self._chain = {"network": "mainnet", "slot": None, "at": 0.0,
                        "mint": MINT, "supply": None, "sol": None, "bag": None}
-        self.talk = self._make_talk()
         self.graph_doc = self._graph_doc()
         threading.Thread(target=self._chain_loop, daemon=True).start()
-
-    @staticmethod
-    def _make_talk():
-        """The visitor channel, or None. Off unless ZF_TALK=1: with it unset
-        /say 404s, _greet is never reached, and the loop runs exactly as it did
-        before this existed."""
-        if not _env_flag("ZF_TALK"):
-            return None
-        narrator = None
-        try:
-            import voice
-            voice.load_dotenv()
-            if os.environ.get("ANTHROPIC_API_KEY"):
-                narrator = voice.Voice()
-        except Exception as exc:  # noqa: BLE001 — layer 3 is optional by design
-            print(f"talk: no narrator ({exc})", file=sys.stderr)
-        print(f"talk: /say is open · narrator "
-              f"{'on' if narrator else 'off (no ANTHROPIC_API_KEY)'}")
-        return talkmod.Talk(narrator=narrator)
 
     def _graph_doc(self):
         """What the site draws: every neuron's position and population. Built
@@ -701,77 +669,6 @@ class Roamer:
         self._publish(detail, dec, out, img)
         return detail, hops_left
 
-    # ---- being shown something ----------------------------------------
-    def _greet(self, msg):
-        """Show the fish a visitor's message and measure what its neurons do.
-
-        Deliberately `step()` with every page interaction removed: same retina,
-        same set_drive, same 400 LIF steps, same decode — but no screenshot, no
-        cursor, no scroll, no click, no navigation. The message is a drawn
-        canvas that slides past the viewport, which is how an optomotor
-        stimulus is delivered to a real larva, and the only thing it touches is
-        the retina.
-
-        The reply is the returned reaction dict. It is measurement, not speech:
-        the fish has no language and this does not give it one."""
-        canvas = talkmod.render(msg["text"], pad=GREET_DRIFT)
-        peak, mean, dec = {}, [], None
-        bout = turn = escape = False
-        saved, self._cam_page = self._cam_page, None   # the camera holds here
-        self._event("talk", f"shown: \u201c{msg['text'][:44]}\u201d")
-        try:
-            for i in range(GREET_THOUGHTS):
-                view = self._greet_crop(canvas, i / GREET_THOUGHTS)
-                self._publish_frame(view)
-                out = self.retina.step(np.asarray(view))
-                for group, hz in self.retina.rates(out, motion_gain=1.5).items():
-                    self.sim.set_drive(self.groups.get(group, []), hz)
-
-                def tick(_i=i):
-                    # keep the live panel at camera rate while the words drift,
-                    # so viewers see a moving stimulus and not one still a second
-                    if time.time() - self._cam_at < 1.0 / max(1.0, CAM_FPS):
-                        return
-                    frac = min(1.0, (_i + 0.5) / GREET_THOUGHTS)
-                    self._publish_frame(self._greet_crop(canvas, frac))
-
-                detail = self.sim.run(SIM_STEPS, tick=tick, tick_every=CAM_SLICE)
-                for g in ("nmlf", "vspn", "mauthner"):
-                    hz = detail["rates_hz"].get(g, 0.0)
-                    self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
-                dec = self.sim.decode(detail["rates_hz"], rest=self._rest)
-                self.stats["brain_steps"] += SIM_STEPS
-                for g, hz in detail["rates_hz"].items():
-                    peak[g] = max(peak.get(g, 0.0), float(hz))
-                mean.append(detail["spikes_per_sec"] / self.sim.n)
-                bout = bout or dec["scroll"] > 0.3
-                turn = turn or dec["turn"] > 0.5
-                escape = escape or bool(dec["escape"])
-                self._publish(detail, dec, out, None)
-        finally:
-            self._cam_page = saved
-        reaction = {
-            "peak": {g: round(v, 1) for g, v in peak.items()},
-            "bout": bout, "turn": turn, "escape": escape,
-            "mean_hz": round(sum(mean) / max(1, len(mean)), 1),
-            "thoughts": GREET_THOUGHTS,
-            "habituation": round(float(detail["habituation"]), 3),
-            "dx": round(dec["dx"], 3), "dy": round(dec["dy"], 3),
-        }
-        entry = self.talk.finish(msg, reaction)
-        self._event("talk", entry["line"][:96])
-        # one more heartbeat, carrying the bumped talk seq and the two events:
-        # the page only refetches /talk when that seq moves, and without this it
-        # would not move until the fish's next thought about a page
-        self._publish(*self._last)
-        return reaction
-
-    def _greet_crop(self, canvas, frac):
-        """The viewport-sized window into the drifting canvas at `frac` of the
-        way through the greeting."""
-        top = int(max(0.0, min(1.0, frac)) * GREET_DRIFT)
-        return canvas.crop((0, top, VIEW_W, top + VIEW_H))
-
     # ---- the heartbeat ------------------------------------------------
     def heartbeat(self, detail=None, dec=None, out=None, status="live"):
         """Everything the site shows, in one dict. Pure: reads state, writes
@@ -800,13 +697,6 @@ class Roamer:
                       "mint": chain.get("mint"), "supply": chain.get("supply"),
                       "sol": chain.get("sol"), "bag": chain.get("bag")},
         }
-        if self.talk is not None:
-            # only the counter rides the heartbeat, never the transcript: this
-            # goes out to every SSE client several times a second, and eight
-            # exchanges of prose in each frame is kilobytes per second per
-            # viewer for text that changes once a minute. The page refetches
-            # GET /talk when seq moves.
-            state["talk"] = self.talk.state()
         if out is not None:
             lum = out["luminance"]
             state["retina"] = {
@@ -888,14 +778,6 @@ class Roamer:
                 try:
                     while h > 0:
                         _, h = self.step(page, h)
-                        # between hops, not during one: a greeting replaces what
-                        # the retina is looking at, so it must not land in the
-                        # middle of a thought about a page. Costs no hop — being
-                        # shown something is not a page it went to.
-                        if self.talk is not None:
-                            msg = self.talk.next_message()
-                            if msg is not None:
-                                self._greet(msg)
                         host = urlsplit(page.url).netloc.lower()
                         why = blocked_url(page.url)
                         if not host:  # about:blank and friends — nothing to see
@@ -929,7 +811,6 @@ class Roamer:
 # ---------------------------------------------------------------------------
 def make_handler(roamer):
     feed = roamer.feed
-    talk = roamer.talk          # None unless ZF_TALK=1, and then /say 404s
     origins = {o.strip() for o in
                os.environ.get("ZF_LIVE_ORIGINS", DEFAULT_ORIGINS).split(",") if o.strip()}
     max_sse = int(os.environ.get("ZF_LIVE_MAX_SSE", "200"))
@@ -978,9 +859,8 @@ def make_handler(roamer):
 
         def do_OPTIONS(self):
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Methods",
-                             "GET, POST, OPTIONS" if talk else "GET, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Cache-Control, Content-Type")
+            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Cache-Control")
             self.send_header("Access-Control-Max-Age", "86400")
             self.send_header("Content-Length", "0")
             self._cors()
@@ -1025,46 +905,8 @@ def make_handler(roamer):
                            extra=[("ETag", f'"{seq}"')])
             elif path == "/events":
                 self._events()
-            elif path == "/talk" and talk is not None:
-                self._json(200, {"seq": talk.state()["seq"], "log": talk.ring()})
             else:
                 self._send(404, b"not found", "text/plain")
-
-        def do_POST(self):
-            """The one inbound path. Everything here is a refusal until proven
-            otherwise: the wrong path, the wrong size, the wrong body shape and
-            the wrong content all end before anything reaches the fish."""
-            if talk is None or self.path.split("?", 1)[0] != "/say":
-                self._send(404, b"not found", "text/plain")
-                return
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                length = -1
-            if length <= 0 or length > 2048:
-                # refuse without reading: a body is never consumed before its
-                # declared size has been checked
-                self._json(413 if length > 2048 else 400,
-                           {"ok": False, "error": "a short JSON body, please"})
-                self.close_connection = True
-                return
-            try:
-                body = json.loads(self.rfile.read(length).decode("utf-8", "replace"))
-                text = body["text"]
-            except Exception:  # noqa: BLE001 — any malformed body is one refusal
-                self._json(400, {"ok": False, "error": 'expected {"text": "..."}'})
-                return
-            ip = (self.headers.get("CF-Connecting-IP")
-                  or self.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-                  or self.client_address[0])
-            ok, detail, code = talk.submit(text, ip)
-            if not ok:
-                self._json(code, {"ok": False, "error": detail})
-                return
-            self._json(200, {"ok": True, "queued": detail, "seq": talk.state()["seq"]})
-
-        def _json(self, code, obj):
-            self._send(code, json.dumps(obj).encode(), "application/json")
 
         def _mjpeg(self):
             """The camera as a video stream: multipart/x-mixed-replace, which
@@ -1140,8 +982,7 @@ def serve(roamer):
     server = ThreadingHTTPServer((host, port), make_handler(roamer))
     server.daemon_threads = True
     print(f"feed on http://{host}:{port}  (/state /frame.jpg /frame.mjpg /firing.bin "
-          f"/events /graph /healthz{' /talk POST /say' if roamer.talk else ''}) "
-          f"· camera {CAM_FPS:g} fps")
+          f"/events /graph /healthz) · camera {CAM_FPS:g} fps")
     server.serve_forever()
 
 

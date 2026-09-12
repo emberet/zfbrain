@@ -100,35 +100,6 @@
     </div>
   </section>
 
-  <section id="talk" style="padding:clamp(48px,7vw,96px) 20px 0;max-width:1200px;margin:0 auto;box-sizing:border-box;">
-    <p style="margin:0;font-size:13px;color:var(--color-accent-300);">&gt; say something to it</p>
-    <h2 style="font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:clamp(22px,2.8vw,36px);line-height:1.15;letter-spacing:0;margin:8px 0 0;color:var(--color-bg);max-width:22ch;">It cannot read. It can still be shown.</h2>
-    <p style="margin:20px 0 0;max-width:64ch;color:var(--color-accent-200);line-height:24px;">Your message is drawn onto a page and drifted across the fish&rsquo;s eye, the way an optomotor stimulus is shown to a real larva. Its retina is 18&times;12, so what arrives is <b style="color:var(--color-bg);">216 numbers</b> of light and motion &mdash; no words, no meaning. What comes back is not a sentence it wrote: it is what its neurons did over the next {{ talkThoughts }} thoughts, in Hz, measured the same way every other number on this page is. Watch the panel above while it happens.</p>
-    <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:28px;">
-      <input type="text" data-zf="talk-input" value="{{ talkText }}" sc-camel-on-change="{{ talkChange }}" sc-camel-on-key-down="{{ talkKey }}" maxlength="120" placeholder="{{ talkPlaceholder }}" disabled="{{ talkDisabled }}" style="flex:1 1 320px;min-width:0;font:inherit;font-size:15px;padding:11px 14px;background:transparent;color:var(--color-bg);border:1px solid color-mix(in srgb, var(--color-bg) 40%, transparent);outline:none;">
-      <button type="button" data-zf="talk-send" sc-camel-on-click="{{ talkSend }}" disabled="{{ talkDisabled }}" style="cursor:pointer;flex:none;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:13px;letter-spacing:.1em;text-transform:uppercase;padding:11px 20px;background:var(--color-bg);color:oklch(0.07 0.03 258);border:1px solid var(--color-bg);opacity:{{ talkSendOpacity }};" style-hover="background:var(--color-accent-200)">{{ talkSendLabel }}</button>
-      <span data-zf="talk-note" style="flex:1 1 100%;font-size:12px;letter-spacing:.06em;color:{{ talkNoteColor }};">{{ talkNote }}</span>
-    </div>
-    <div style="margin-top:28px;border-top:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);">
-      <sc-for list="{{ talkLog }}" as="x" hint-placeholder-count="3">
-        <div data-zf="talk-row" style="padding:18px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);">
-          <div style="display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;">
-            <span style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--color-accent-300);font-feature-settings:'tnum' 1;white-space:nowrap;">{{ x.t }} · shown</span>
-            <span data-zf="talk-msg" style="font-size:17px;color:var(--color-bg);overflow-wrap:anywhere;">&ldquo;{{ x.text }}&rdquo;</span>
-          </div>
-          <div style="display:flex;flex-wrap:wrap;gap:4px 18px;margin-top:10px;font-size:13px;font-feature-settings:'tnum' 1;color:var(--color-accent-300);">
-            <sc-for list="{{ x.rates }}" as="r">
-              <span>{{ r.k }} <b style="color:var(--color-accent-200);font-weight:600;">{{ r.v }}</b> Hz</span>
-            </sc-for>
-          </div>
-          <p data-zf="talk-line" style="margin:10px 0 0;line-height:23px;color:var(--color-accent-200);">{{ x.line }}</p>
-          <p style="margin:8px 0 0;line-height:23px;color:var(--color-accent-200);display:{{ x.narratorDisplay }};"><span style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;color:var(--color-accent-300);">narrator ·</span> <i>{{ x.narrator }}</i></p>
-        </div>
-      </sc-for>
-    </div>
-    <p data-zf="talk-empty" style="margin:18px 0 0;font-size:13px;color:var(--color-accent-300);display:{{ talkEmptyDisplay }};">{{ talkEmpty }}</p>
-  </section>
-
   <section id="what" style="padding:clamp(48px,7vw,96px) 20px 0;max-width:1200px;margin:0 auto;box-sizing:border-box;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:24px 64px;">
     <div>
       <p style="margin:0;font-size:13px;color:var(--color-accent-300);">&gt; what it is</p>
@@ -228,8 +199,7 @@ class Component extends DCLogic {
   // nothing answers, the page says so — it never invents a number.
   LIVE_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:4660' : 'https://live.zfbrain.online';
   STALE_MS = 15000;
-  state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, stream: true, view: 'page', copied: false, now: Date.now(),
-            talkText: '', talkBusy: false, talkNote: '', talkErr: false, talkLog: [], talkSeq: -1 };
+  state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, stream: true, view: 'page', copied: false, now: Date.now() };
   componentDidMount() {
     this.raf = requestAnimationFrame(() => this.draw());
     this.ro = new ResizeObserver(() => this.resize());
@@ -285,38 +255,9 @@ class Component extends DCLogic {
     if (!this.state.stream && feed.frame && feed.frame.seq !== this.state.frameSeq) {
       upd.frameSeq = feed.frame.seq; upd.frameSrc = this.LIVE_BASE + '/frame.jpg?seq=' + feed.frame.seq;
     }
-    // the transcript is not in the heartbeat — only its seq is, because the
-    // heartbeat goes out several times a second to every viewer and the
-    // transcript changes once a minute. Refetch only when that seq moves.
-    if (feed.talk && feed.talk.seq !== this.state.talkSeq) { upd.talkSeq = feed.talk.seq; this.pullTalk(); }
     this.setState(upd);
   }
   isLive() { return this.state.mode === 'live' && this.state.now - this.state.lastSeen < this.STALE_MS; }
-  // --- being shown something: POST /say, and the transcript behind it ---
-  pullTalk() {
-    fetch(this.LIVE_BASE + '/talk', { cache: 'no-store' })
-      .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(d => this.setState({ talkLog: d.log || [] }))
-      .catch(() => {});   // the panel simply keeps the transcript it has
-  }
-  talkSend() {
-    const text = (this.state.talkText || '').trim();
-    if (!text || this.state.talkBusy) return;
-    this.setState({ talkBusy: true, talkNote: 'showing it…', talkErr: false });
-    fetch(this.LIVE_BASE + '/say', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }) })
-      .then(async (r) => {
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok || !d.ok) throw new Error(d.error || ('refused · ' + r.status));
-        // the reply is not in this response: it arrives when the brain has
-        // actually run, over the same heartbeat everything else rides
-        this.setState({ talkText: '', talkBusy: false, talkErr: false,
-                        talkNote: d.queued > 1 ? 'queued · ' + d.queued + ' ahead of you' : 'in front of its eye now — watch the panel above' });
-      })
-      .catch((e) => this.setState({ talkBusy: false, talkErr: true,
-                                    talkNote: String(e.message || e) }));
-  }
   // --- the hero: the brain's own neurons, in 3-D ---
   // /graph says how many and where the layout is; /graph.bin is float32
   // (x, y, z) per neuron — x rostral->caudal, y across the midline, z dorsal —
@@ -692,29 +633,6 @@ class Component extends DCLogic {
         { group: 'Veto', drives: 'fence', body: 'Not a neuron: every click is inspected before it lands and refused if it looks like a submit, pay-wall or sign-in.' },
       ],
       plan,
-      // --- being shown something ---------------------------------------
-      // Only the rates the run actually reported are listed; a population the
-      // packet does not carry is left out rather than shown as a zero.
-      talkThoughts: 'six',
-      talkText: s.talkText,
-      talkDisabled: (!live || s.talkBusy) ? true : null,
-      talkSendOpacity: (!live || s.talkBusy || !(s.talkText || '').trim()) ? '.45' : '1',
-      talkSendLabel: s.talkBusy ? 'showing…' : 'show it',
-      talkPlaceholder: live ? 'a short line — it will be drawn and drifted past its eye' : 'the fish is not running right now',
-      talkChange: (e) => this.setState({ talkText: e.target.value.slice(0, 120), talkNote: '', talkErr: false }),
-      talkKey: (e) => { if (e.key === 'Enter') this.talkSend(); },
-      talkSend: () => this.talkSend(),
-      talkNote: s.talkNote || (live ? (120 - (s.talkText || '').length) + ' characters left · one message per visitor per minute' : 'nothing can be shown to it while it is asleep'),
-      talkNoteColor: s.talkErr ? 'var(--color-bg)' : 'var(--color-accent-300)',
-      talkLog: (s.talkLog || []).map((x) => {
-        const r = (x.reaction && x.reaction.peak) || {};
-        const show = [['nMLF','nmlf'],['vSPN','vspn'],['Mauthner','mauthner'],['DSGC up','dsgc_up'],['DSGC down','dsgc_down']];
-        return { t: hhmmss(x.done || x.at), text: x.text, line: x.line || '',
-                 narrator: x.narrator || '', narratorDisplay: x.narrator ? 'block' : 'none',
-                 rates: show.filter(([, k]) => r[k] != null).map(([name, k]) => ({ k: name, v: Number(r[k]).toFixed(1) })) };
-      }),
-      talkEmptyDisplay: (s.talkLog || []).length ? 'none' : 'block',
-      talkEmpty: live ? 'nothing has been shown to it yet.' : 'the transcript is only served while the fish is running.',
       chain: [['Contract',MINT],['Name · ticker','Zebra Fish · ZFBRAIN'],['Creator tax','none · the mint carries no transfer-fee extension'],['Supply',(chain.supply != null ? n(chain.supply) : '1,000,000,000') + ' · mint authority revoked'],["The fish's bag", chain.bag != null ? n(Math.round(chain.bag)) + (chain.supply ? ' · ' + (chain.bag / chain.supply * 100).toFixed(2) + ' % of supply' : '') : dash],["The fish's SOL", chain.sol != null ? chain.sol.toFixed(4) : dash],['Chain','Solana · Token-2022'],['Venue','pump.fun → Raydium']].map(([k,v]) => ({k,v})),
       honest: [
         { lead: 'The counts are the larva’s. The wiring is not.', body: 'A real 7-day-old zebrafish has 187,053 cell bodies and about 39 million synapses — those are the numbers in the header, and there are that many neurons running above, each one a leaky integrate-and-fire unit with ~208 synapses, laid out in the shape of the larva. But the graph is synthetic: the electron-microscope reconstruction is still being proofread and we do not have it yet. The header will say whose connectome it is the day that export is in. NOTEPAD.md tracks it.' },
@@ -722,7 +640,6 @@ class Component extends DCLogic {
         { lead: 'The only learning is habituation.', body: 'Short-term synaptic depression on the sensory inputs — the real larval kind: every spike uses a little synaptic resource, it recovers over ~20 s. A held flash stops startling the Mauthner cell, a page stared at for a minute drives the brain less. No reward signal is invented; the habituation row above is that resource, used.' },
         { lead: 'The feed is live only while the fish is running.', body: 'What you see above is streamed from one machine running roam.py. When it is off, this page says asleep; it never replays or invents telemetry.' },
         { lead: 'The words are a narrator.', body: 'The fish has no language. Posts are written by a language model handed real telemetry and live chain numbers; a draft whose numbers are not in that packet is thrown away.' },
-        { lead: 'It cannot read your message.', body: 'The section above is not a chat. A message you send is drawn onto a page and drifted across the retina as a moving stimulus — 216 numbers of light, the same 216 the fish gets from every other page — and nothing in this system turns letters into meaning. What comes back is the measured reaction of the same neurons: rates in Hz, and whether the decode produced a bout, a turn or a startle. The sentence under it is a template over those numbers. The italic line, when there is one, is the narrator again, held to the same rule: a number that is not in the reaction is thrown away.' },
         { lead: 'It has no goals.', body: 'No reward circuit feeds back. What you see is reaction, not intent; the goal is set outside and read honestly.' },
         { lead: 'There is no creator tax.', body: 'An earlier version of this page said 1%, on a transfer-fee extension. The mint does not carry one: its extensions are metadataPointer and tokenMetadata, nothing else. Nothing takes a cut of a transfer.' },
         { lead: 'The fish did not launch it. A person did.', body: 'sollive.py, the rig in the repo, can sign and simulate a mainnet transaction but has never been able to build a pump.fun create instruction — read it and see. $ZFBRAIN was created by hand on pump.fun. The mint is real and every number above is read back off it; the claim that the animal did it would not be.' },
