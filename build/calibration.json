@@ -1,0 +1,7 @@
+{
+  "synthetic:187053:38974036:208.4": {
+    "calibrated_at": "2026-09-11T20:58:36",
+    "note": "calibrate.py's value, recorded in commit 4f03186. Restored by hand on 2026-09-13 after `build_graph.py --smoke` overwrote build/graph.meta.json during step-08 testing \u2014 the same loss 4f03186 fixed for rebuilds, through a door it did not close. Re-verified by fishsim.smoke(): populations alive, none saturated, still page quiet, flash 0 -> 210 Hz, habituation 210 -> 120. calibrated_mean_hz is absent because it was not re-measured; run calibrate.py to replace this entry with a freshly bisected one.",
+    "weight_scale": 0.050141
+  }
+}

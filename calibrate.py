@@ -171,7 +171,12 @@ def main():
     meta["calibrated_mean_hz"] = round(float(best["mean"]), 2)
     meta["calibrated_at"] = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
     meta_path.write_text(json.dumps(meta, indent=2) + "\n")
-    print(f"# wrote weight_scale to {meta_path}; now run: python fishsim.py")
+    # and into the per-graph store, which a later build of a *different* graph
+    # (--smoke, say) cannot overwrite the way it overwrites the meta
+    import build_graph as bg
+    bg.write_calibration(meta_path.parent, meta)
+    print(f"# wrote weight_scale to {meta_path} and {meta_path.parent / bg.CALIB}; "
+          f"now run: python fishsim.py")
 
 
 if __name__ == "__main__":

@@ -3,9 +3,16 @@
 
 # data & artifacts
 data/
-build/
+# build/* not build/, or the negation below cannot reach inside it: git does
+# not descend into an excluded directory
+build/*
 .state/
 recordings/
+# ...except the calibration. It is four numbers that take a bisection to find,
+# and "build/ is gitignored, so the only copy was the one overwritten" is
+# already the postmortem of two separate incidents (4f03186, and a --smoke
+# build during step 08). Tracked so there is a second copy.
+!build/calibration.json
 
 # python
 __pycache__/

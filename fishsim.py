@@ -96,10 +96,29 @@ def load_graph(graph_path, groups_path):
         return {"meta": meta, "root_ids": ids, "coords": coords, "types": types,
                 "pre": pre, "post": post, "w": w,
                 "groups": {k: np.asarray(v, dtype=np.int64) for k, v in groups.items()}}
-    npz = np.load(graph_path)
     groups_path = Path(groups_path)
     groups = json.loads(groups_path.read_text()) if groups_path.exists() else {}
     meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+
+    # a real EM export is a directory of .npy files next to where graph.npz
+    # would have been. 39M edges is ~450 MB; opened with mmap the OS pages in
+    # what the sim touches and nothing else, and because build_graph already
+    # sorted them by `pre` and wrote the CSR indptr, startup does no sorting.
+    gdir = Path(graph_path).with_name("graph")
+    manifest_path = gdir / "graph.manifest.json"
+    if manifest_path.exists():
+        man = json.loads(manifest_path.read_text())
+        arr = {k: np.load(gdir / f"{k}.npy", mmap_mode="r")
+               for k in ("root_ids", "coords", "types", "pre", "post", "w", "indptr")}
+        meta.setdefault("label", "Fish1 slice")
+        meta.setdefault("neurons", int(man["neurons"]))
+        meta.setdefault("synapses", int(man["edges"]))
+        return {"meta": meta, "w_absmax": man.get("w_absmax"),
+                "indptr": arr["indptr"], **{k: arr[k] for k in
+                                            ("root_ids", "coords", "types", "pre", "post", "w")},
+                "groups": {k: np.asarray(v, dtype=np.int64) for k, v in groups.items()}}
+
+    npz = np.load(graph_path)
     meta.setdefault("label", "unknown graph")
     meta.setdefault("neurons", int(len(npz["coords"])))
     meta.setdefault("synapses", int(len(npz["pre"])))
@@ -115,8 +134,15 @@ def load_graph(graph_path, groups_path):
     }
 
 
-def to_csr(n, pre, post, w):
-    """Outgoing synapses grouped by presynaptic neuron."""
+def to_csr(n, pre, post, w, indptr=None):
+    """Outgoing synapses grouped by presynaptic neuron.
+
+    If build_graph already sorted the edges by `pre` and wrote the indptr, this
+    is a no-op: the argsort and the two fancy-index copies below are what pull a
+    39M-edge memmapped graph into RAM at every startup."""
+    if indptr is not None:
+        return (np.asarray(indptr, dtype=np.int64),
+                np.asarray(post, dtype=np.int32), np.asarray(w, dtype=np.float32))
     order = np.argsort(pre, kind="stable")
     counts = np.bincount(pre, minlength=n)
     indptr = np.zeros(n + 1, dtype=np.int64)
@@ -191,14 +217,25 @@ class FishSim:
         if HAVE_NUMBA:
             _seed(seed)
 
-        # scale weights so typical EPSPs stay in a sane mV band
-        w = graph["w"].astype(np.float64)
-        m = np.abs(w)
-        scale = float(self.meta.get("weight_scale", 0.0)) or (EPSP / min(6.0, m.max()) if m.max() > 0 else 1.0)
+        # scale weights so typical EPSPs stay in a sane mV band.
+        # The fallback scale only needs max|w|, and build_graph puts that in the
+        # manifest — computing it here meant a float64 copy plus an abs() of the
+        # whole edge table, 600 MB of churn at 39M edges every time a process
+        # started.
+        scale = float(self.meta.get("weight_scale", 0.0))
+        if not scale:
+            wmax = graph.get("w_absmax")
+            if wmax is None:
+                wmax = float(np.abs(graph["w"]).max()) if len(graph["w"]) else 0.0
+            scale = EPSP / min(6.0, wmax) if wmax > 0 else 1.0
         self.weight_scale = scale
+        indptr = graph.get("indptr")
         self.indptr, self.targets, self.weights = to_csr(
-            self.n, np.asarray(graph["pre"], dtype=np.int64), np.asarray(graph["post"], dtype=np.int64),
-            (w * scale).astype(np.float32))
+            self.n,
+            None if indptr is not None else np.asarray(graph["pre"], dtype=np.int64),
+            graph["post"] if indptr is not None else np.asarray(graph["post"], dtype=np.int64),
+            (np.asarray(graph["w"], dtype=np.float32) * np.float32(scale)).astype(np.float32),
+            indptr=indptr)
 
         self.v = np.full(self.n, REST_V, dtype=np.float64)
         self.isyn = np.zeros(self.n, dtype=np.float64)
