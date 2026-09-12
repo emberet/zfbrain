@@ -351,8 +351,15 @@ Three layers, most honest first:
       before the body is read.
 - [x] New `#honest` item — *"It cannot read your message."* — so the page states
       the limit itself instead of letting the section imply otherwise.
-- [ ] **[HW]** Flip `ZF_TALK=1` on the live fish (launchd plist) and redeploy
-      the site when you want this public. Nothing is live until you do.
+- [x] **Live, 2026-09-13.** `ZF_TALK=1` appended to `.env` (the flags file
+      `bin/roam.sh` sources; backup at `.env.bak.20260913`), service restarted
+      with `launchctl kickstart -k`, and the site deployed. Verified through the
+      public tunnel with `Origin: https://zfbrain.online`: preflight returns
+      `GET, POST, OPTIONS`, `POST /say` queued, and the fish greeted it ~6s
+      later — DSGC 27.2 Hz, no bout, 34.7 Hz across the graph over 6 thoughts.
+      The exchange renders on zfbrain.online with no console errors.
+      Note the restart reset the run counters (life 17 -> 1, brain_steps 4.9M
+      -> 0); that is the process restarting, not a death.
 - [ ] If launch day needs edge-side abuse protection, this shape takes a Pages
       Function with Turnstile in front of `/say` without changing any of the
       above. Not added — there is no backend today.

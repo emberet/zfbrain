@@ -1,5 +1,9 @@
 # secrets
 .env
+# ...and any copy of it. `.env` alone does not match `.env.bak.20260913`, and a
+# backup taken before editing the flags file is still the Solana seed.
+.env.*
+!.env.example
 
 # data & artifacts
 data/
