@@ -58,14 +58,31 @@ class Retina:
             out[:, shift:] = np.abs(curr[:, shift:] - prev[:, :-shift])
         return out
 
+    def reset(self):
+        """Forget the previous frame, so the next one reports no motion.
+
+        Call this when the scene is cut rather than moved - a new page, or
+        entering the table - otherwise the first frame of the new scene is
+        differenced against the last frame of the old one, and an unrelated
+        image is a whole-field flash.
+        """
+        self._prev = None
+
     def _flow(self, curr):
-        prev = self._prev if self._prev is not None else curr
         s = self.shift
+        # There is no motion in a single frame. Substituting prev=curr does not
+        # give zero, it gives the *spatial* gradient |curr[s:] - curr[:-s]|,
+        # which on any textured image is as large as real motion and reads as a
+        # flash - enough to trip Mauthner on the first frame of every life.
+        # Only `right` used to be guarded; all four are now.
+        if self._prev is None:
+            self._prev = curr.copy()
+            return {k: np.zeros_like(curr) for k in ("up", "down", "left", "right")}
+        prev = self._prev
         # each pair detects motion one way; opposite pair is the other direction
         left = self._motion(curr, prev, s)      # stuff moving right -> left shift
-        right = self._motion(prev, curr, s) if prev is not curr else np.zeros_like(curr)
-        up = np.zeros_like(curr)
-        dn = np.zeros_like(curr)
+        right = self._motion(prev, curr, s)
+        up, dn = np.zeros_like(curr), np.zeros_like(curr)
         if curr.shape[0] > 2 * s:
             up[s:, :] = np.abs(curr[s:, :] - prev[:-s, :])
             dn[:-s, :] = np.abs(curr[:-s, :] - prev[s:, :])

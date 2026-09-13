@@ -100,6 +100,63 @@
     </div>
   </section>
 
+  <section id="pong" style="padding:clamp(48px,7vw,96px) 20px 0;max-width:1200px;margin:0 auto;box-sizing:border-box;">
+    <p style="margin:0;font-size:13px;color:var(--color-accent-300);">&gt; play it</p>
+    <h2 style="font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:clamp(22px,2.8vw,36px);line-height:1.15;letter-spacing:0;margin:8px 0 0;color:var(--color-bg);">It is not playing you. It is holding station in moving water.</h2>
+    <p style="margin:14px 0 0;max-width:64ch;color:var(--color-accent-200);line-height:24px;">A ball on a plain field moves almost nothing in this brain — the direction-selective cells decode a drift of 0.016, against the 0.08 it takes to move anything, and the startle cell fires instead. So the table is a rig, the kind a real lab builds: the floor under the ball is a grating, and a grating that drifts drives those cells to 0.78. One line of Python points the grating the way the ball lies. The fish supplies the reflex that holds a larva still in a current, and nothing else. It is not tracking the ball. It is holding station against a floor somebody else aimed.</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:24px;margin-top:28px;">
+      <div style="border:1px solid color-mix(in srgb, var(--color-bg) 30%, transparent);display:flex;flex-direction:column;min-width:0;">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 12px;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);font-size:12px;">
+          <span style="color:var(--color-accent-300);letter-spacing:.1em;text-transform:uppercase;font-weight:600;white-space:nowrap;flex:none;">{{ pongStatusLabel }}</span>
+          <span style="flex:1 1 120px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-accent-200);">{{ pongSeatLabel }}</span>
+          <button type="button" data-zf="pong-seat" sc-camel-on-click="{{ pongToggleSeat }}" style="cursor:pointer;flex:none;font:inherit;font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600;padding:3px 10px;background:transparent;color:var(--color-accent-300);border:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);" style-hover="color:var(--color-bg);border-color:var(--color-bg)">{{ pongSeatButton }}</button>
+        </div>
+        <div style="position:relative;aspect-ratio:16/10;overflow:hidden;background:color-mix(in srgb, var(--color-bg) 6%, transparent);">
+          <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:color-mix(in srgb, var(--color-bg) 18%, transparent);"></div>
+          <div data-zf="pong-fish" style="position:absolute;display:{{ pongDisplay }};left:{{ pongFishX }};top:{{ pongFishY }};width:{{ pongPaddleW }};height:{{ pongPaddleH }};transform:translate(-50%,-50%);background:var(--color-accent-300);"></div>
+          <div data-zf="pong-visitor" style="position:absolute;display:{{ pongDisplay }};left:{{ pongVisitorX }};top:{{ pongVisitorY }};width:{{ pongPaddleW }};height:{{ pongPaddleH }};transform:translate(-50%,-50%);background:var(--color-bg);"></div>
+          <div data-zf="pong-ball" style="position:absolute;display:{{ pongDisplay }};left:{{ pongBallX }};top:{{ pongBallY }};width:{{ pongBallSize }};aspect-ratio:1;border-radius:50%;transform:translate(-50%,-50%);background:var(--color-bg);"></div>
+          <div style="position:absolute;inset:0;display:{{ pongIdleDisplay }};align-items:center;justify-content:center;text-align:center;padding:24px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-300);">{{ pongIdleText }}</div>
+          <div style="position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;flex-wrap:wrap;gap:2px 12px;padding:14px 10px 6px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent-300);background:linear-gradient(to bottom, transparent, oklch(0.07 0.03 258 / .88) 55%);pointer-events:none;"><span>{{ pongDriftLabel }}</span><span>{{ pongDyLabel }}</span></div>
+          {{ pongSurface }}
+        </div>
+        <div style="padding:7px 12px;border-top:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);font-size:11.5px;color:var(--color-accent-300);line-height:18px;">{{ pongCaption }}</div>
+      </div>
+      <div style="border:1px solid color-mix(in srgb, var(--color-bg) 30%, transparent);display:flex;flex-direction:column;min-width:0;">
+        <div style="padding:8px 12px;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);font-size:12px;color:var(--color-accent-300);letter-spacing:.1em;text-transform:uppercase;font-weight:600;">points · written by template, not by a model</div>
+        <div style="flex:1;padding:8px 12px;font-size:12.5px;line-height:20px;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;">
+          <sc-for list="{{ pongPoints }}" as="p" hint-placeholder-count="5">
+            <div style="display:grid;grid-template-columns:64px minmax(0,1fr);gap:12px;color:{{ p.color }};"><span style="color:var(--color-accent-300);font-feature-settings:'tnum' 1;">{{ p.t }}</span><span>{{ p.msg }}</span></div>
+          </sc-for>
+          <div style="display:grid;grid-template-columns:64px minmax(0,1fr);gap:12px;color:var(--color-accent-300);"><span></span><span>{{ pongPointsEmpty }}</span></div>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 48px;margin-top:24px;border-top:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);">
+      <sc-raw-table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <sc-raw-tbody>
+          <sc-for list="{{ pongScore }}" as="p" hint-placeholder-count="5">
+            <sc-raw-tr>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:var(--color-accent-200);vertical-align:top;">{{ p.name }}</sc-raw-td>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);text-align:right;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:20px;font-feature-settings:'tnum' 1;overflow-wrap:anywhere;">{{ p.value }}</sc-raw-td>
+            </sc-raw-tr>
+          </sc-for>
+        </sc-raw-tbody>
+      </sc-raw-table>
+      <sc-raw-table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <sc-raw-tbody>
+          <sc-for list="{{ learning }}" as="l" hint-placeholder-count="5">
+            <sc-raw-tr>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:var(--color-accent-200);vertical-align:top;">{{ l.name }}</sc-raw-td>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);text-align:right;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:{{ l.size }};font-feature-settings:'tnum' 1;overflow-wrap:anywhere;">{{ l.value }}</sc-raw-td>
+            </sc-raw-tr>
+          </sc-for>
+        </sc-raw-tbody>
+      </sc-raw-table>
+    </div>
+    <p style="margin:22px 0 0;max-width:70ch;color:var(--color-accent-200);line-height:24px;">{{ learningNote }}</p>
+  </section>
+
   <section id="what" style="padding:clamp(48px,7vw,96px) 20px 0;max-width:1200px;margin:0 auto;box-sizing:border-box;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:24px 64px;">
     <div>
       <p style="margin:0;font-size:13px;color:var(--color-accent-300);">&gt; what it is</p>
@@ -199,7 +256,8 @@ class Component extends DCLogic {
   // nothing answers, the page says so — it never invents a number.
   LIVE_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:4660' : 'https://live.zfbrain.online';
   STALE_MS = 15000;
-  state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, stream: true, view: 'page', copied: false, now: Date.now() };
+  state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, stream: true, view: 'page', copied: false, now: Date.now(),
+            pongToken: null, pongMsg: null, pongPoints: [], pongThoughts: null };
   componentDidMount() {
     this.raf = requestAnimationFrame(() => this.draw());
     this.ro = new ResizeObserver(() => this.resize());
@@ -219,7 +277,7 @@ class Component extends DCLogic {
     document.addEventListener('mouseleave', this._onLeave);
     this.connect();
   }
-  componentWillUnmount() { clearInterval(this.clock); clearInterval(this.pollTimer); cancelAnimationFrame(this.raf); this.ro && this.ro.disconnect(); this.es && this.es.close(); window.removeEventListener('mousemove', this._onMove); document.removeEventListener('mouseleave', this._onLeave); }
+  componentWillUnmount() { clearInterval(this.clock); clearInterval(this.pollTimer); cancelAnimationFrame(this.raf); this.ro && this.ro.disconnect(); this.es && this.es.close(); window.removeEventListener('mousemove', this._onMove); document.removeEventListener('mouseleave', this._onLeave); this.pongRelease(); }
   // a blink every 3–7 s: 0 open → 1 shut → 0, ~220 ms, seeded from the clock
   blinkAmount(t) {
     if (this._nextBlink == null) this._nextBlink = t + 2.5;
@@ -255,9 +313,68 @@ class Component extends DCLogic {
     if (!this.state.stream && feed.frame && feed.frame.seq !== this.state.frameSeq) {
       upd.frameSeq = feed.frame.seq; upd.frameSrc = this.LIVE_BASE + '/frame.jpg?seq=' + feed.frame.seq;
     }
+    // the heartbeat carries the ball and the paddles but not the transcript —
+    // it fans out to every watcher several times a second. pong.seq moves on
+    // every paddle twitch, so refetch on the score instead: that is the only
+    // thing that appends a point.
+    if (feed.pong && feed.pong.score) {
+      const done = (feed.pong.score.fish || 0) + (feed.pong.score.visitor || 0);
+      if (done !== this._pongDone) { this._pongDone = done; this.loadPoints(); }
+    }
     this.setState(upd);
   }
   isLive() { return this.state.mode === 'live' && this.state.now - this.state.lastSeen < this.STALE_MS; }
+  // --- the table -------------------------------------------------------
+  // The only thing a visitor can send is one clamped number. Nothing typed
+  // reaches the fish, and nothing the fish does comes back through here.
+  loadPoints() {
+    fetch(this.LIVE_BASE + '/pong', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(b => { if (b) this.setState({ pongPoints: b.points || [], pongThoughts: b.thoughts }); })
+      .catch(() => {});
+  }
+  pongPost(path, body) {
+    return fetch(this.LIVE_BASE + path, { method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(r => r.json()).catch(() => null);
+  }
+  pongToggleSeat() { this.state.pongToken ? this.pongLeave() : this.pongJoin(); }
+  pongJoin() {
+    this.setState({ pongMsg: 'asking for the seat…' });
+    this.pongPost('/pong/join', {}).then(b => {
+      if (!b || !b.ok) return this.setState({ pongMsg: (b && b.why) || 'the table did not answer' });
+      this.setState({ pongToken: b.token, pongMsg: 'your seat · move the pointer over the table' });
+      // the pointer writes a target; this sends it. Throttling by clock rather
+      // than by event means a fast mouse costs the same as a slow one, and a
+      // still one costs nothing at all — pongFlush returns early unchanged.
+      clearInterval(this.aimTimer);
+      this.aimTimer = setInterval(() => this.pongFlush(), 120);
+    });
+  }
+  pongAim(e) {
+    if (!this.state.pongToken) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    if (!r.height) return;
+    const p = (this.state.feed && this.state.feed.pong) || {};
+    this._aimY = Math.round(((e.clientY - r.top) / r.height) * (p.h || 800));
+  }
+  pongFlush() {
+    const t = this.state.pongToken;
+    if (!t || this._aimY == null || this._aimY === this._aimSent) return;
+    this._aimSent = this._aimY;
+    this.pongPost('/pong/move', { token: t, y: this._aimY }).then(b => {
+      // the seat expires after 20 s of silence and a point can end it. When
+      // the table says the seat is not ours, stop claiming it.
+      if (b && !b.ok) this.pongDrop(b.why);
+    });
+  }
+  pongRelease() {   // timers and the seat, without touching state
+    clearInterval(this.aimTimer); this.aimTimer = null;
+    this._aimY = this._aimSent = null;
+    if (this.state.pongToken) this.pongPost('/pong/leave', { token: this.state.pongToken });
+  }
+  pongDrop(why) { clearInterval(this.aimTimer); this.aimTimer = null; this._aimY = this._aimSent = null; this.setState({ pongToken: null, pongMsg: why || null }); }
+  pongLeave() { this.pongRelease(); this.setState({ pongToken: null, pongMsg: 'you left the table' }); }
   // --- the hero: the brain's own neurons, in 3-D ---
   // /graph says how many and where the layout is; /graph.bin is float32
   // (x, y, z) per neuron — x rostral->caudal, y across the midline, z dorsal —
@@ -566,6 +683,16 @@ class Component extends DCLogic {
     const retina = live && f.retina ? f.retina : null;
     const showRetina = live && s.view === 'retina' && retina;
     const stats = live ? (f.stats || {}) : {};
+    // the table. Every number below is one the roamer reported; when nothing is
+    // reporting, the panel says so rather than drawing a ball from memory.
+    const pong = live ? (f.pong || null) : null;
+    const pw = (pong && pong.w) || 1280, ph = (pong && pong.h) || 800;
+    const pIn = (pong && pong.inset) || 60, pWide = (pong && pong.paddle_w) || 18;
+    const pctOf = (v, of) => ((v / of) * 100).toFixed(2) + '%';
+    const rules = (live && f.plasticity) || [];
+    const ruleNames = { intrinsic: 'intrinsic · threshold', habituation_slow: 'habituation · slow pool',
+                        dishabituation: 'dishabituation', hebbian: 'hebbian · retina→DSGC' };
+    const dyNow = live && f.decode && f.decode.dy != null ? f.decode.dy : null;
     return {
       frameWidth: '1440px', planCols: '48px minmax(0,1fr) auto',
       neurons: n(graph.neurons), synapses: n(graph.synapses), graphLabel: graph.label || (s.mode === 'connecting' ? 'connecting' : 'fish asleep'),
@@ -624,6 +751,52 @@ class Component extends DCLogic {
       copy: () => { navigator.clipboard && navigator.clipboard.writeText(MINT).catch(() => {}); this.setState({ copied: true }); setTimeout(() => this.setState({ copied: false }), 1200); },
       behaviors: names.map(([name, key]) => { const r = live ? (rates[key] || 0) : 0; return { name, rate: r.toFixed(1), pct: (live ? Math.min(100, r / rMax * 100) : 0) + '%' }; }),
       life: [['pages visited', n(stats.pages)],['clicks', n(stats.clicks)],['scrolls', n(stats.scrolls)],['escapes', n(stats.escapes)],['vetoed clicks', n(stats.vetoed)],['brain steps', n(stats.brain_steps)],['habituation', live && f.brain && f.brain.habituation != null ? Math.round(f.brain.habituation * 100) + ' %' : dash],['where it is', live && f.page && f.page.short ? f.page.short : dash]].map(([name, value]) => ({ name, value, size: name === 'where it is' ? '13px' : '20px', kind: name === 'where it is' ? 'life-url' : 'life-val' })),
+      pongDisplay: pong ? 'block' : 'none',
+      pongIdleDisplay: pong ? 'none' : 'flex',
+      pongIdleText: s.mode === 'connecting' ? 'connecting to the fish…'
+        : (live ? 'the table is not switched on' : 'the fish is not running right now'),
+      pongStatusLabel: pong ? (pong.held ? 'a rally is running' : 'the table is free') : 'no table',
+      pongSeatLabel: s.pongMsg || (pong && pong.held && !s.pongToken ? 'someone else is at the table' : 'one visitor at a time · everyone else watches'),
+      pongSeatButton: s.pongToken ? 'leave the table' : 'take the table',
+      pongToggleSeat: () => this.pongToggleSeat(),
+      // the pointer surface. It sits over the field and does exactly one thing:
+      // turn a y into a clamped number for POST /pong/move.
+      pongSurface: React.createElement('div', {
+        onPointerMove: (e) => this.pongAim(e), onPointerDown: (e) => this.pongAim(e),
+        style: { position: 'absolute', inset: 0, touchAction: 'none',
+                 cursor: s.pongToken ? 'ns-resize' : 'default' } }),
+      // paddles are drawn about their centre here and about their outer face in
+      // pong.render(), so the inset gets half a paddle added to it. The numbers
+      // come off the feed rather than being copied, or the bar on this page and
+      // the bar the fish is actually looking at drift apart.
+      pongFishX: pctOf(pIn + pWide / 2, pw), pongVisitorX: pctOf(pw - pIn - pWide / 2, pw),
+      pongPaddleW: pctOf(pWide, pw),
+      pongPaddleH: pctOf((pong && pong.paddle_h) || 150, ph),
+      pongFishY: pctOf(pong ? pong.fish_y : ph / 2, ph),
+      pongVisitorY: pctOf(pong ? pong.visitor_y : ph / 2, ph),
+      pongBallX: pctOf(pong ? pong.ball[0] : pw / 2, pw),
+      pongBallY: pctOf(pong ? pong.ball[1] : ph / 2, ph),
+      pongBallSize: pctOf(2 * ((pong && pong.ball_r) || 26), pw),
+      pongDriftLabel: !pong ? '' : (!pong.rig ? 'rig off · flat field' : pong.drift > 0 ? 'floor drifting down' : pong.drift < 0 ? 'floor drifting up' : 'floor still'),
+      pongDyLabel: pong && dyNow != null ? 'decoded drift ' + dyNow.toFixed(3) : '',
+      pongCaption: 'The light bar is the fish’s paddle and it moves by one number: the up/down asymmetry decoded off its direction-selective cells, times a fixed gain. There is no other path from the brain to it. Yours is the pale bar; you send one clamped y and nothing else.',
+      pongPoints: (s.pongPoints || []).slice(0, 6).map((p) => ({ t: hhmmss(p.at), msg: p.line, color: p.winner === 'fish' ? 'var(--color-bg)' : 'var(--color-accent-200)' })),
+      pongPointsEmpty: (s.pongPoints || []).length ? '' : (pong ? 'no point has finished yet' : 'nothing to transcribe'),
+      pongScore: [
+        ['the fish', pong ? n(pong.score.fish) : dash],
+        ['the visitors', pong ? n(pong.score.visitor) : dash],
+        ['returns this point', pong ? n(pong.rally) : dash],
+        ['points played', n(stats.points)],
+        ['thoughts per rally', s.pongThoughts != null ? n(s.pongThoughts) : dash],
+      ].map(([name, value]) => ({ name, value })),
+      learning: [
+        ['rules running', rules.length ? rules.map((r) => ruleNames[r] || r).join(', ') : (live ? 'habituation only' : dash)],
+        ['habituation · fast', live && f.brain && f.brain.habituation != null ? Math.round(f.brain.habituation * 100) + ' %' : dash],
+        ['habituation · slow', live && f.brain && f.brain.habituation_slow != null ? (f.brain.habituation_slow * 100).toFixed(1) + ' %' : dash],
+        ['thresholds raised', live && f.brain && f.brain.intrinsic != null ? f.brain.intrinsic.toFixed(3) + ' mV' : dash],
+        ['startle restores', live && f.brain && f.brain.sensitized != null ? n(f.brain.sensitized) : dash],
+      ].map(([name, value]) => ({ name, value, size: name === 'rules running' ? '13px' : '20px' })),
+      learningNote: 'Does any of that make it better at this? We ran it both ways — thirty identical rallies with the Hebbian rule off, then the same thirty with it on. The synapses really did change: the spread of the retina’s outgoing weights went from exactly zero to 3.6e-2. The play did not. The paddle tracked the ball to 91.3 px with the rule off and 94.7 px with it on — a 3.3 px difference, against the 7.0 px each run drifts against itself from its own first half to its own last. That is a null result, and it is the one to expect: nothing here rewards the fish for getting it right, so nothing aims the change anywhere useful. It learns. It does not improve. We would rather print that than add the reward signal that would guarantee a nicer number.',
       readouts: [
         { group: 'Retina', drives: 'input', body: 'Luminance and optic-flow maps from a live screenshot, injected retinotopically into the ganglion-cell layer.' },
         { group: 'DSGC ×4', drives: 'cursor x · y', body: 'Direction-selective ganglion cells, up/down/left/right. A fish steers by asymmetry, so the difference between opposed pairs drives the cursor.' },
@@ -637,7 +810,8 @@ class Component extends DCLogic {
       honest: [
         { lead: 'The counts are the larva’s. The wiring is not.', body: 'A real 7-day-old zebrafish has 187,053 cell bodies and about 39 million synapses — those are the numbers in the header, and there are that many neurons running above, each one a leaky integrate-and-fire unit with ~208 synapses, laid out in the shape of the larva. But the graph is synthetic: the electron-microscope reconstruction is still being proofread and we do not have it yet. The header will say whose connectome it is the day that export is in. NOTEPAD.md tracks it.' },
         { lead: 'It runs hot.', body: 'A randomly wired brain this size has a very narrow band between silent and saturated — a real connectome’s structure is what normally keeps it there. Ours sits near the top of that band: a third of the neurons fire in any 5 ms window, the spinal cord runs harder than a larva’s would, and the fish startles more often than it swims. The alternative was to invent a stabiliser, and we would rather show you the honest number.' },
-        { lead: 'The only learning is habituation.', body: 'Short-term synaptic depression on the sensory inputs — the real larval kind: every spike uses a little synaptic resource, it recovers over ~20 s. A held flash stops startling the Mauthner cell, a page stared at for a minute drives the brain less. No reward signal is invented; the habituation row above is that resource, used.' },
+        { lead: 'The learning is real, and it is not aimed at anything.', body: 'Five mechanisms; the play-it section above lists which of them are actually switched on right now. Synaptic depression on the sensory inputs, the real larval kind — every spike spends a little resource that recovers over ~20 s, so a held flash stops startling the Mauthner cell. A second, slower pool behind it that takes ten minutes to refill. A startle that restores both, which is why a surprise undoes an hour of boredom. Neurons that trim their own excitability toward a set rate — a threshold that can only rise, never fall, so it can make the brain quieter and never louder. And Hebbian change across the 6.8 million synapses leaving the retina, where the total current each cell delivers is held exactly constant, so it can change which cells it speaks to but never how loudly. No reward signal is invented. It amplifies what it already does, not what works.' },
+        { lead: 'It is not trying to win at the table.', body: 'The paddle is the optomotor reflex — what a larva uses to hold station in moving water — pointed at a drifting floor that a line of Python aims for it. We measured whether the plasticity makes it better at that: thirty rallies with the Hebbian rule off, thirty with it on. The synapses moved and the play did not, by less than the noise the same run shows against itself. That null is printed above rather than papered over, and it is what a reward-free rule should be expected to do.' },
         { lead: 'The feed is live only while the fish is running.', body: 'What you see above is streamed from one machine running roam.py. When it is off, this page says asleep; it never replays or invents telemetry.' },
         { lead: 'The words are a narrator.', body: 'The fish has no language. Posts are written by a language model handed real telemetry and live chain numbers; a draft whose numbers are not in that packet is thrown away.' },
         { lead: 'It has no goals.', body: 'No reward circuit feeds back. What you see is reaction, not intent; the goal is set outside and read honestly.' },

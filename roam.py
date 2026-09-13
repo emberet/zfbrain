@@ -52,6 +52,7 @@ import numpy as np
 from PIL import Image
 
 import solrpc
+import fishsim
 from fishsim import FishSim, load_graph
 from retina import Retina
 
@@ -148,6 +149,12 @@ CAM_SLICE = 25                    # brain steps between camera checks (~12 ms of
 SEC_PER_THOUGHT = 1.0             # how long a heading is swum out over, wall-clock
 DEFAULT_ORIGINS = ("https://zfbrain.online,https://www.zfbrain.online,"
                    "https://zfbrain.pages.dev,http://localhost:8787")
+
+# the table (ZF_PONG=1). A rally replaces a page thought rather than adding one,
+# and only runs while a visitor is holding the seat, so browsing stays what the
+# fish does with its life.
+RALLY_THOUGHTS = int(os.environ.get("ZF_PONG_THOUGHTS", "40"))
+POST_MAX = 2048                   # bytes; checked before the body is read
 
 
 def _env_flag(name):
@@ -270,7 +277,7 @@ class Roamer:
         self._require_groups()
 
         self.stats = {"pages": 0, "clicks": 0, "scrolls": 0, "vetoed": 0,
-                      "escapes": 0, "brain_steps": 0}
+                      "escapes": 0, "brain_steps": 0, "points": 0}
         self.events = deque(maxlen=12)
         self.feed = Feed()
         self._seq = 0
@@ -294,6 +301,14 @@ class Roamer:
         self._last = None          # (detail, dec, out) so a camera tick can republish
         self._chain = {"network": "mainnet", "slot": None, "at": 0.0,
                        "mint": MINT, "supply": None, "sol": None, "bag": None}
+        # the table, or None. Every /pong path 404s while this is None, so the
+        # feature is off by default in code and turned on in .env, the way
+        # ZF_ALLOW_BROWSER and ZF_TALK were before it.
+        self.table = None
+        if _env_flag("ZF_PONG"):
+            import pong as pongmod
+            self.pong = pongmod
+            self.table = pongmod.Table(rig=not _env_flag("ZF_PONG_NORIG"))
         self.graph_doc = self._graph_doc()
         threading.Thread(target=self._chain_loop, daemon=True).start()
 
@@ -724,6 +739,83 @@ class Roamer:
         self._publish(detail, dec, out, img)
         return detail, hops_left
 
+    # ---- the table -----------------------------------------------------
+    def _rally(self):
+        """Play until the visitor lets go of the seat, or the budget runs out.
+
+        Deliberately `step()` with every page interaction removed: same retina,
+        same set_drive, same 400 LIF steps, same decode - but no screenshot, no
+        cursor, no scroll, no click, no navigation. The only thing that reaches
+        the brain is light on the retina, which is the same thing a page is.
+
+        The loop per thought, in order, because the order is the whole claim:
+
+          1. aim the grating at the ball          (Python, not the fish)
+          2. draw the table and publish it        (what the fish will see)
+          3. retina -> set_drive -> 400 steps     (the fish)
+          4. decode()['dy'] -> move its paddle    (the fish)
+          5. advance the ball, score it           (Python, not the fish)
+
+        Step 4 is the only path from the brain to the paddle, and `dy` is the
+        DSGC asymmetry and nothing else. The fish is never told the score, and
+        step 5's outcome reaches no synapse - there is no reward here, which is
+        why `fishsim`'s "No reward signal is invented" is still true with this
+        feature running.
+
+        The fish's own paddle is drawn into the scene it sees, so its motion
+        comes back through its own retina a thought later. That closed loop is
+        the honest reason this counts as playing rather than as a demo.
+        """
+        table = self.table
+        saved, self._cam_page = self._cam_page, None   # the camera holds here
+        # the table is a cut, not a move: without this the first frame of the
+        # rally is differenced against the last frame of a web page, and an
+        # unrelated image is a whole-field flash
+        self.retina.reset()
+        self._event("pong", "someone is at the table")
+        played = 0
+        try:
+            for _ in range(RALLY_THOUGHTS):
+                if not table.occupied():
+                    break
+                table.drift(table.grating_dir())
+                view = self.pong.render(table.snapshot())
+                self._publish_frame(view)
+                out = self.retina.step(np.asarray(view))
+                for group, hz in self.retina.rates(out, motion_gain=1.5).items():
+                    self.sim.set_drive(self.groups.get(group, []), hz)
+
+                def tick():
+                    # keep the live panel at camera rate while the brain thinks,
+                    # so the rally plays as video rather than one frame a second
+                    if time.time() - self._cam_at < 1.0 / max(1.0, CAM_FPS):
+                        return
+                    self._publish_frame(self.pong.render(table.snapshot()))
+
+                detail = self.sim.run(SIM_STEPS, tick=tick, tick_every=CAM_SLICE)
+                for g in ("nmlf", "vspn", "mauthner"):
+                    hz = detail["rates_hz"].get(g, 0.0)
+                    self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
+                dec = self.sim.decode(detail["rates_hz"], rest=self._rest)
+                self.stats["brain_steps"] += SIM_STEPS
+                table.move_fish(dec["dy"])
+                event = table.advance()
+                played += 1
+                if event and event.startswith("point_"):
+                    entry = table.ring()[0]
+                    self.stats["points"] += 1
+                    self._event("pong", entry["line"][:96])
+                self._publish(detail, dec, out, None)
+        finally:
+            self._cam_page = saved
+            # and back to the page: the next thing the retina sees is a web
+            # page again, and that is a cut too
+            self.retina.reset()
+        self._event("pong", f"the table is free again · {played} thoughts")
+        if self._last is not None:
+            self._publish(*self._last)
+        return played
+
     # ---- the heartbeat ------------------------------------------------
     def heartbeat(self, detail=None, dec=None, out=None, status="live"):
         """Everything the site shows, in one dict. Pure: reads state, writes
@@ -752,6 +844,15 @@ class Roamer:
                       "mint": chain.get("mint"), "supply": chain.get("supply"),
                       "sol": chain.get("sol"), "bag": chain.get("bag")},
         }
+        if self.table is not None:
+            # ball, paddles, score and a seq - no transcript. This fans out to
+            # every SSE client several times a second; the page refetches /pong
+            # for the finished points only when `seq` moves.
+            state["pong"] = self.table.state()
+        # which of the four slow rules are actually switched on. The site may
+        # only claim a mechanism that is running, so this comes from the module
+        # that owns the flags rather than from anything the page hard-codes.
+        state["plasticity"] = fishsim.plasticity_on()
         if out is not None:
             lum = out["luminance"]
             state["retina"] = {
@@ -768,6 +869,11 @@ class Roamer:
                 "firing_seq": self._mask_seq,               # which /firing.bin these bits are
                 "habituation": detail["habituation"],       # sensory synaptic resource used, 0-1
                 "rates_hz": detail["rates_hz"],
+                # the slow rules. Each reads 0 when its flag is off, so these
+                # cannot show learning the brain is not actually doing.
+                "habituation_slow": detail.get("habituation_slow", 0.0),
+                "intrinsic": detail.get("intrinsic", 0.0),
+                "sensitized": detail.get("sensitized", 0),
             }
         return state
 
@@ -833,6 +939,12 @@ class Roamer:
                 try:
                     while h > 0:
                         _, h = self.step(page, h)
+                        # between hops, not during one: a rally replaces what
+                        # the retina is looking at, so it must not land in the
+                        # middle of a thought about a page. Costs no hop - the
+                        # table is not somewhere it went.
+                        if self.table is not None and self.table.occupied():
+                            self._rally()
                         host = urlsplit(page.url).netloc.lower()
                         why = blocked_url(page.url)
                         if not host:  # about:blank and friends — nothing to see
@@ -917,8 +1029,9 @@ def make_handler(roamer):
 
         def do_OPTIONS(self):
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Cache-Control")
+            methods = "GET, POST, OPTIONS" if roamer.table is not None else "GET, OPTIONS"
+            self.send_header("Access-Control-Allow-Methods", methods)
+            self.send_header("Access-Control-Allow-Headers", "Cache-Control, Content-Type")
             self.send_header("Access-Control-Max-Age", "86400")
             self.send_header("Content-Length", "0")
             self._cors()
@@ -963,8 +1076,70 @@ def make_handler(roamer):
                            extra=[("ETag", f'"{seq}"')])
             elif path == "/events":
                 self._events()
+            elif path == "/pong":
+                if roamer.table is None:
+                    self._send(404, b"no table", "text/plain")
+                    return
+                body = {"state": roamer.table.state(), "points": roamer.table.ring(),
+                        "thoughts": RALLY_THOUGHTS}
+                self._send(200, json.dumps(body).encode(), "application/json")
             else:
                 self._send(404, b"not found", "text/plain")
+
+        # ---- the table's two inbound paths -----------------------------
+        # The first inbound endpoint since /say was pulled. Everything a
+        # visitor can send is either a token we issued or one float, and
+        # neither is ever drawn, logged as text, or interpreted.
+        def _read_json(self):
+            """(obj, error). The length cap is checked against the header
+            *before* the body is read, so an oversized POST costs us the
+            header and nothing else - we never allocate what we are refusing."""
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return None, "bad Content-Length"
+            if n <= 0:
+                return None, "empty body"
+            if n > POST_MAX:
+                return None, f"too big — {POST_MAX} bytes at most"
+            try:
+                obj = json.loads(self.rfile.read(n).decode("utf-8", "replace"))
+            except (ValueError, OSError):
+                return None, "that is not JSON"
+            return (obj, None) if isinstance(obj, dict) else (None, "expected an object")
+
+        def do_POST(self):
+            path = self.path.split("?", 1)[0]
+            table = roamer.table
+            if table is None or path not in ("/pong/join", "/pong/move", "/pong/leave"):
+                self._send(404, b"not found", "text/plain")
+                return
+            obj, err = self._read_json()
+            if err:
+                self._send(413 if "too big" in err else 400,
+                           json.dumps({"ok": False, "why": err}).encode(),
+                           "application/json")
+                return
+            if path == "/pong/join":
+                ok, detail, code = table.join(self.client_address[0])
+                body = {"ok": ok, "token": detail} if ok else {"ok": False, "why": detail}
+            elif path == "/pong/move":
+                ok, detail, code = table.move(obj.get("token"), obj.get("y"))
+                body = {"ok": ok, "y": detail} if ok else {"ok": False, "why": detail}
+            else:
+                # release(None) frees the seat unconditionally, which is what
+                # the rally path wants and what an inbound request must never
+                # be able to do — otherwise anyone can boot whoever is playing
+                # by posting an empty body. A string, or 403.
+                tok = obj.get("token")
+                if not isinstance(tok, str):
+                    ok, code = False, 403
+                    body = {"ok": False, "why": "that is not your seat"}
+                else:
+                    ok = table.release(tok)
+                    body, code = {"ok": ok}, 200 if ok else 403
+            body["state"] = table.state()
+            self._send(code, json.dumps(body).encode(), "application/json")
 
         def _mjpeg(self):
             """The camera as a video stream: multipart/x-mixed-replace, which
@@ -1039,8 +1214,13 @@ def serve(roamer):
     port = int(os.environ.get("ZF_ROAM_PORT", "4660"))
     server = ThreadingHTTPServer((host, port), make_handler(roamer))
     server.daemon_threads = True
-    print(f"feed on http://{host}:{port}  (/state /frame.jpg /frame.mjpg /firing.bin "
-          f"/events /graph /healthz) · camera {CAM_FPS:g} fps")
+    paths = "/state /frame.jpg /frame.mjpg /firing.bin /events /graph /healthz"
+    if roamer.table is not None:
+        paths += " /pong +POST /pong/join /pong/move /pong/leave"
+    print(f"feed on http://{host}:{port}  ({paths}) · camera {CAM_FPS:g} fps")
+    rules = fishsim.plasticity_on()
+    print("plasticity: " + (", ".join(rules) if rules else
+                            "habituation only (the four slow rules are off)"))
     server.serve_forever()
 
 

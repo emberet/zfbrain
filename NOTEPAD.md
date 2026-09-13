@@ -379,6 +379,121 @@ real pages clean, including all four Wikipedia articles that used to trip.
   nothing to click until it hydrates. Left alone; worth a look if it shows up
   as a dead seed.
 
+## 7d · Plasticity + the table (2026-09-13)
+
+Two asks, one feature: give the fish more to learn with, and a place to play
+table tennis with it. They belong together because a rally is the first thing
+this project has ever had that **repeats** — the same stimulus, the same cells,
+over and over — which is the only condition under which plasticity is
+observable at all. Reward-free by decision: `fishsim.py`'s "No reward signal is
+invented" and `#honest` item 5 are unchanged, verbatim.
+
+### The measurements the design rests on (all verified, none assumed)
+
+- **The plastic set is 40% of the brain, not a corner of it.** retina n=48,091,
+  dsgc n=26,730; retina outgoing 6,816,150 edges, dsgc outgoing 7,782,350 →
+  14,598,500 = **37.5%** of 38,974,036.
+- **`groups["retina"]` is exactly `arange(0, 48091)`**, so its CSR rows are the
+  single contiguous slice `weights[:indptr[48091]]`. That is what makes a
+  pre-gated Hebbian rule possible with **no reverse index** — STDP would have
+  needed an inverted copy of 14.6M edges, 60–120 MB. Rejected on that.
+- **Every retina→DSGC weight starts at one magnitude, 0.30084598** (= 6 ×
+  0.050141), so per-synapse bounds need no stored `w0` array. Zero extra memory.
+- **Calibration headroom is ~+8%** ("silent at 0.027, saturated at 0.054"). This
+  is why dishabituation had to be a **restore of `d` toward 1.0**, never a gain
+  above it. A `SENS_MAX = 1.5` would have saturated the graph on the first
+  startle. Both depression pools are bounded by `d ≤ 1`; IP is one-sided (theta
+  only ever rises); Hebbian is exactly L1-conserved per presynaptic row, so the
+  total current a retina cell delivers is invariant and the DSGC pool's mean
+  input cannot move. All four are safe **by construction**, not by tuning.
+- **The motion detector is a matched filter at exactly 3 grid cells.**
+  `_downsample` point-samples, so `ROWS = linspace(0, 799, 12).astype(int)` and 3
+  rows apart is **218 px**; 3 columns is 225 px. A stimulus that translates 218
+  px between `retina.step()` calls drives `dsgc_down` to saturation and
+  `dsgc_up` to *exactly zero* — the discriminator is the **null in `up`**, not
+  the peak in `down`, which clips at `motion_max`. A ball smaller than ~75 px
+  falls between sample points and is invisible.
+
+### The measurement that changed the feature
+
+A ball on a plain field does not move this brain. Measured at r = 40, 90 and
+150 px: **|dy| ≤ 0.016**, against the 0.08 needed to move anything — and the
+Mauthner cell fires on 2–4 frames in 12. A drifting grating gives **0.78**.
+
+```
+still grating          |dy| 0.004     0/8  escapes
+grating +218 px/frame  |dy| 0.777     0/12 escapes
+grating -218 px/frame  |dy| 0.780     0/12 escapes
+ball alone (r=150)     |dy| 0.016     4/12 escapes   <- the fish flinches
+ball over a grating    |dy| 0.613     0/15 escapes
+```
+
+So the table is a **rig**, the kind a real lab builds: the floor is a grating
+and `grating_dir()` — one line of Python, and the only line that is not the
+fish — points it the way the ball lies. The fish supplies the optomotor reflex
+and nothing else. `rig=False` renders the raw ball and is the feature's own
+falsification: |dy| falls 0.78 → 0.004 and the paddle stops. The site says all
+of this in plain words rather than claiming the fish tracks a ball.
+
+### Cost — and the pattern worth remembering
+
+First cut was **+55.8%** per frame for all four rules, over the ≤35% budget.
+Both overruns were the same mistake: *a term that does not depend on anything
+the inner loop computes does not belong in a loop that runs 187,053 × 400 = 75
+million times a frame.*
+
+- IP's threshold **decay** cost **+26.3%** to move theta by 0.002 mV. Moved to
+  `_ip_decay`, once per window → **+9.5%**.
+- The slow pool's **recovery** cost **+7.2%** to change `d2` by 0.03% (τ = 600 s
+  against a 200 ms window). Moved to `_dep2_recover`, once per window and in
+  **closed form**, so the window version is if anything the more accurate of the
+  two → **+0.3%**. The *depletion* is per-spike and stayed in `_propagate`.
+
+Final: **all four on, +33.1% per frame** (0.239 s against a ~1 s thought).
+
+### Two things that cost an hour each
+
+- **`retina._flow` was reading a flash on the first frame of every life.** With
+  `_prev is None` it substituted `prev = curr`, which does not give zero — it
+  gives the *spatial* gradient `|curr[s:] - curr[:-s]|`, as large as real motion
+  on any textured image. Only `right` had ever been guarded; the other three
+  were not. Fixed, and `reset()` added for when the scene is **cut** rather than
+  moved (new page, entering the table) — otherwise frame one of the new scene is
+  differenced against the last frame of the old one. Ball-on-plain escapes fell
+  4/12 → 2/12 on the fix alone.
+- **The synthetic graph's spinal pool is near-critical**, and it nearly got
+  blamed on the dep2 refactor. A **0.0006** change in `d2` — four orders of
+  magnitude smaller than the thing being measured — swung spinal from 11.2 to
+  15.2 Hz. That is a brain calibrated between "silent at 0.027" and "saturated
+  at 0.054" behaving as it should, not drift. There is now a comment in
+  `_smoke()` saying so, because the obvious next move is to pin an assertion to
+  that number and it would fail for reasons nobody can act on.
+
+### Does the learning help? No — and that is the honest answer
+
+30 identical rallies with the Hebbian rule off, then the same 30 with it on:
+
+```
+hebbian off -> on:  |dy| 0.5739 -> 0.5843   paddle-ball 91.3 -> 94.7 px
+retina weights moved: 0.00e+00 (off) vs 3.61e-02 (on)
+difference 3.3 px vs within-run drift 7.0 px -> inside the noise
+```
+
+The synapses genuinely changed; the play did not. This is what a reward-free
+rule should be expected to do, it is printed on the page as a null rather than
+buried, and the fix for it — a reward signal — is exactly what the project
+declined to invent. `tools/rally.py --compare` reproduces it;
+`tools/rally.py --soak` replays 2,000 frames and re-asserts the bounds.
+
+### Verified
+`smoke OK` **and** `smoke OK (plastic)`; `build/calibration.json` still
+0.050141; kernel parity numba-vs-numpy **exact** on `d`, `d2`, `theta`,
+`last_spike` and `weights` across all six flag combinations (v/isyn ~3e-16,
+summation order); per-row L1 conserved to 2.6e-07; habituation train still
+habituates with all four on (215 → 120 Hz); endpoints refuse a 3 KB body on the
+header without reading it, second joiner gets 409, bad token 403, everything
+404s without `ZF_PONG`.
+
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
       gentle anti-founder-mode behavior.
