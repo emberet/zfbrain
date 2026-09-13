@@ -365,9 +365,19 @@ real pages clean, including all four Wikipedia articles that used to trip.
 - Worth re-running that probe occasionally. These strings are a snapshot of
   what the CDNs served on one day; the last set lasted until it didn't, and the
   failure mode is silent — the fish just gets quietly worse at browsing.
-- `HOME_SEEDS`' own comment says "no captcha-walled sites here". That was true
-  when written. Four of them have walled since, so the list wants re-checking
-  rather than trusting the comment.
+- [x] **Pruned, same day.** Probed all 24 seeds rather than only the four the
+      fish had happened to hit: exactly those four were walled, no others, none
+      errored. `HOME_SEEDS` is now 20. They stay on `DEFAULT_ALLOWLIST` on
+      purpose — reaching them by *wandering* is still fine and the runtime
+      darts away; the seed list only decides where a life may **begin**.
+      Verified after: 27 pages in 300 s, zero walls hit, no deaths.
+- The seed-list comment claimed "no captcha-walled sites here" and had been
+  wrong for some time. Re-probe rather than trust it; the probe is
+  `/tmp/zfb-seeds.py` in shape — 15 lines of Playwright over `HOME_SEEDS`.
+- `archive.org` renders **0 `a[href]`** at domcontentloaded + 2.5 s (it hydrates
+  late). Not a wall, so it survived the prune, but a life starting there has
+  nothing to click until it hydrates. Left alone; worth a look if it shows up
+  as a dead seed.
 
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a

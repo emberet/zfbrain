@@ -102,6 +102,13 @@ HOME_SEEDS = [
     # no captcha-walled sites here (solscan, dexscreener etc.) — they freeze
     # the browser, and a life that *starts* on one usually dies before its
     # first hop. Reaching them by wandering is fine; starting on them is not.
+    #
+    # That claim needs re-testing, not trusting: it was true when written and
+    # four entries have walled since. Probed all of them 2026-09-13 and dropped
+    # nga.gov, loc.gov, si.edu and eol.org — each serving "Just a moment..."
+    # with two links on it, against 42-3,016 links for every seed kept. The
+    # runtime catches a wall either way (see _is_captcha_page / _pick_seed);
+    # this list is just where a life is allowed to *begin*.
     "https://en.wikipedia.org/wiki/Zebrafish",
     "https://en.wikipedia.org/wiki/Fish",
     "https://en.wikipedia.org/wiki/Aquarium",
@@ -114,16 +121,12 @@ HOME_SEEDS = [
     "https://xkcd.com/",
     "https://publicdomainreview.org/collections/",
     "https://www.metmuseum.org/art/collection",
-    "https://www.nga.gov/collection.html",
-    "https://www.loc.gov/free-to-use/",
-    "https://www.si.edu/explore",
     "https://science.nasa.gov/solar-system/",
     "https://www.openstreetmap.org/",
     "https://arxiv.org/list/q-bio.NC/recent",
     "https://www.biorxiv.org/collection/neuroscience",
     "https://zfin.org/",
     "https://mapzebrain.org/",
-    "https://eol.org/",
     "https://elifesciences.org/subjects/neuroscience",
     "https://www.microns-explorer.org/",
 ]
