@@ -122,6 +122,77 @@ def run_one(tag, rallies, thoughts, hebb):
             "d_err": last[:, 1].mean() - first[:, 1].mean()}
 
 
+def fair(rallies, thoughts):
+    """Sweep the rig's duty cycle against an opponent that actually plays.
+
+    `play()` above leaves the visitor's paddle parked at the centre, which is
+    fine for measuring the fish but useless for setting a difficulty: the fish
+    beat that 169-73 in the soak. So this puts a tracking visitor on the other
+    side - it moves toward the ball at VISITOR_MAX_DY, seeing the ball one
+    thought late, which is roughly what a person on the page gets from the
+    feed. It is deliberately not perfect; a perfect returner never loses and
+    would push the duty cycle to 1.0 to compensate.
+
+    The knob being swept is pong.AIM_DUTY - how often the rig may aim the floor
+    at the ball. That is the difficulty and the whole difficulty, because a
+    still floor decodes |dy| ~0.01 and the paddle does not move.
+
+    Read the paddle-ball and |dy| columns, not the win%. The win% barely moves
+    across the whole sweep - at aim 0.0 the rig is off and the paddle is
+    effectively still, and the fish *still* takes about half the points, which
+    means that column is measuring this opponent missing rather than the fish
+    playing. pong.AIM_DUTY's comment records what the columns that do mean
+    something were used for.
+    """
+    fishsim.set_plasticity(ip=1, dep2=1, sens=1, hebb=1)
+    print(f"  fairness sweep: {rallies} rallies x {thoughts} thoughts per value,"
+          f" tracking visitor (one thought of lag)\n")
+    print(f"    {'aim':>5}  {'fish':>5} {'you':>5}  {'fish win%':>9}  {'|dy|':>6}  paddle-ball")
+    print("    " + "-" * 56)
+    out = []
+    for aim in (1.0, 0.75, 0.5, 0.35, 0.25, 0.0):
+        r = build()
+        r.table = pong.Table(aim=aim, seat_idle_s=1e9, per_ip_s=0.0)
+        # the opponent. One thought of lag: it chases where the ball *was*,
+        # which is the same handicap the page's visitor has.
+        lag = {"y": pong.VIEW_H / 2.0}
+        real_advance = r.table.advance
+
+        def advance(_real=real_advance, _t=r.table, _lag=lag):
+            # goes through Table.move, the same clamp and the same seat check a
+            # real visitor's POST gets - not a direct write to visitor_y
+            _t.move(_t._seat, _lag["y"])
+            _lag["y"] = _t.ball_y          # seen now, acted on next thought
+            return _real()
+
+        r.table.advance = advance
+        rows = play(r, rallies, thoughts)
+        s = r.table.score
+        tot = max(1, s["fish"] + s["visitor"])
+        out.append((aim, s["fish"], s["visitor"], 100.0 * s["fish"] / tot,
+                    float(rows[:, 0].mean()), float(rows[:, 1].mean())))
+        print(f"    {aim:5.2f}  {s['fish']:5d} {s['visitor']:5d}  {out[-1][3]:8.1f}%"
+              f"  {out[-1][4]:6.3f}  {out[-1][5]:6.1f} px")
+
+    # the two criteria, applied rather than described. Deliberately *not*
+    # "whichever value came nearest 50%" - see the docstring: that column is
+    # measuring this opponent missing, and picking on it would be picking noise.
+    reach = pong.PADDLE_H / 2 + pong.BALL_R     # how far the bat can already get
+    ok = [row for row in out if row[5] > reach and row[4] > 4 * 0.08]
+    print(f"\n  paddle-ball must clear the bat's own reach, "
+          f"{reach:.0f} px, or the fish is in range of the ball on average")
+    print(f"  |dy| must stay well over the 0.08 that moves anything")
+    if ok:
+        pick = max(ok, key=lambda row: row[0])  # the most help that still clears
+        print(f"  both clear at: {', '.join(f'{row[0]:.2f}' for row in ok)}"
+              f"  -> most help that still clears is {pick[0]:.2f}"
+              f" ({pick[5]:.0f} px, {pick[4]:.3f})")
+    else:
+        print("  nothing cleared both - the rig cannot be made fair by duty cycle alone")
+    print(f"  pong.AIM_DUTY is {pong.AIM_DUTY}")
+    return 0
+
+
 def soak(rallies, thoughts):
     """Play hard, then check that the four rules are still inside the bounds the
     whole calibration argument rests on.
@@ -186,8 +257,12 @@ def main():
                     help="run it twice, with the Hebbian rule off and on")
     ap.add_argument("--soak", action="store_true",
                     help="play hard, then re-check the plasticity bounds")
+    ap.add_argument("--fair", action="store_true",
+                    help="sweep the rig's duty cycle against a tracking visitor")
     a = ap.parse_args()
 
+    if a.fair:
+        return fair(a.rallies, a.thoughts)
     if a.soak:
         return soak(a.rallies, a.thoughts)
 

@@ -90,6 +90,47 @@ PADDLE_GAIN = 150.0                 # px of paddle travel per unit of decoded dy
 VISITOR_MAX_DY = 320.0              # px per thought, so a human can still miss
 DEADBAND = 40.0                     # closer than this and the grating holds still
 
+# How much of the time the rig is allowed to aim. The floor drifting is the only
+# thing that moves the fish's paddle - a still floor decodes |dy| ~0.01, well
+# under the 0.08 it takes to move anything - so this fraction *is* the fish's
+# difficulty, and there is no separate skill knob hiding behind it.
+#
+# tools/rally.py --fair, 10 rallies x 40 thoughts against a tracking visitor:
+#
+#     aim    |dy|   paddle-ball   fish win%
+#    1.00   0.566      89.5 px      59.5%
+#    0.75   0.435     111.4 px      65.1%
+#    0.50   0.299     122.7 px      48.1%
+#    0.35   0.227     144.0 px      48.2%
+#    0.25   0.173     154.1 px      46.0%
+#    0.00   0.005     178.1 px      47.8%
+#
+# Not chosen on win%, which is noise: at aim 0.00 the rig is off entirely and
+# the paddle barely moves, yet the fish still takes 47.8% - that column is
+# measuring the opponent missing, not the fish playing. Chosen on the two
+# columns that are monotonic and mean something:
+#
+#   * paddle-ball must exceed the paddle's own reach, PADDLE_H/2 + BALL_R =
+#     101 px, or the fish is within range of the ball on average and looks
+#     like it is auto-hitting. That rules out 1.00, and 0.75 only just clears.
+#   * |dy| must stay well clear of the 0.08 that moves anything, or the paddle
+#     stops being visibly the fish's doing and the whole section loses its
+#     point.
+#
+# 0.50 clears both with margin: 122.7 px is a fifth outside reach, and 0.299 is
+# nearly four times the threshold.
+AIM_DUTY = 0.5
+
+# -- the rally score, after Chrome's dinosaur ----------------------------
+# The dino scores distance survived, not goals, and keeps a HI next to it. That
+# suits this table better than fish-vs-visitor does: the interesting quantity is
+# how long the two of you kept the ball alive, and the fish is not trying to win
+# anyway. Ticks while the ball is in play, jumps on a return, resets when the
+# point ends. HI lives in the process - a restart forgets it, and the page says
+# so rather than pretending otherwise.
+SCORE_PER_THOUGHT = 16              # one per sub-step at RALLY_SUBSTEPS=16
+SCORE_PER_RETURN = 100
+
 # -- seat control ---------------------------------------------------------
 SEAT_IDLE_S = 20.0                  # silence that gives the table up
 PER_IP_S = 30.0                     # one join per visitor per half minute
@@ -155,7 +196,10 @@ def line(point):
     else:
         head = f"{n} returns before the point ended."
     tail = "the visitor took it" if who == "visitor" else "the fish took it"
-    return f"{head} Mean decoded drift {dy:.3f}; {tail}."
+    run = point.get("run_score")
+    score = "" if run is None else (
+        f" {run:05d}{' — new best' if point.get('best') else ''}.")
+    return f"{head} Mean decoded drift {dy:.3f}; {tail}.{score}"
 
 
 class Table:
@@ -166,14 +210,17 @@ class Table:
     leaves goes out as a copy, so no caller can hold a reference into the ring.
     """
 
-    def __init__(self, rig=True, seat_idle_s=SEAT_IDLE_S, per_ip_s=PER_IP_S):
+    def __init__(self, rig=True, seat_idle_s=SEAT_IDLE_S, per_ip_s=PER_IP_S,
+                 aim=AIM_DUTY):
         self.lock = threading.Lock()
         self.seq = 0                   # bumps on every change; the heartbeat
                                        # carries it so the page knows to refetch
         self.log = deque(maxlen=RING_MAX)
         self.rig = bool(rig)
+        self.aim = float(min(max(aim, 0.0), 1.0))
         self.phase = 0.0
         self._dir = 0
+        self._credit = 0.0             # the duty cycle's accumulator, not an RNG
         self._seat = None              # token of whoever holds the table
         self._seat_at = 0.0
         self._seat_ip = None
@@ -183,6 +230,8 @@ class Table:
         self._dys = []
         self._n = 0
         self.score = {"fish": 0, "visitor": 0}
+        self.run_score = 0.0           # this point, dino-style
+        self.hi_score = 0              # best since the process started
         self.rally = 0
         self._serve(+1)
 
@@ -201,6 +250,7 @@ class Table:
         self.fish_y = VIEW_H / 2.0
         self.visitor_y = VIEW_H / 2.0
         self.rally = 0
+        self.run_score = 0.0           # the dino reset: a miss costs the run
         self._dys = []
 
     # -- the rig -----------------------------------------------------------
@@ -211,12 +261,29 @@ class Table:
         relative to the fish's paddle and aims the grating there; the brain
         never sees this number, only the moving image that results. Called on
         the sim thread once per thought, before the frame is rendered.
+
+        `aim` withholds the rig on some thoughts. A duty cycle rather than a
+        weaker push, because the push has no strength to weaken: the grating
+        steps by exactly one matched-filter lag or it does not step at all, and
+        a smaller step would land off the null in `up` and drive both channels.
+        So the only thing that can be dialled is *how often*, and this dials it.
+
+        Deterministic - a Bresenham accumulator, not an RNG - because the fish
+        is a closed loop and a random floor would be a different experiment on
+        every rally. At aim=0.5 the rig aims on alternate thoughts, and the
+        withheld ones are the fish coasting on its own last decode.
         """
         with self.lock:
             if not self.rig:
                 return 0
             err = self.ball_y - self.fish_y
-            return 0 if abs(err) < DEADBAND else (1 if err > 0 else -1)
+            if abs(err) < DEADBAND:
+                return 0
+            self._credit += self.aim
+            if self._credit < 1.0:
+                return 0
+            self._credit -= 1.0
+            return 1 if err > 0 else -1
 
     def drift(self, direction):
         """Advance the grating by exactly one matched-filter step."""
@@ -238,15 +305,24 @@ class Table:
             self.seq += 1
 
     # -- physics -----------------------------------------------------------
-    def advance(self):
-        """One thought of ball. Returns an event string, or None.
+    def advance(self, frac=1.0):
+        """`frac` of a thought of ball. Returns an event string, or None.
 
         'return_fish' / 'return_visitor' when a paddle got there, 'point_fish' /
         'point_visitor' when one did not. The fish is never told which.
+
+        The rally calls this in sub-steps while the brain is thinking, so the
+        ball crosses the table smoothly instead of teleporting 200 px once a
+        second. That is purely how the ball is drawn between retina samples -
+        the grating still steps exactly one matched-filter lag per thought, and
+        the retina still samples exactly once per thought, so nothing here
+        changes what the fish is shown or how it decodes it. Summing frac to
+        1.0 over a thought reproduces the old single call.
         """
         with self.lock:
-            self.ball_x += self.ball_vx
-            self.ball_y += self.ball_vy
+            self.run_score += SCORE_PER_THOUGHT * frac
+            self.ball_x += self.ball_vx * frac
+            self.ball_y += self.ball_vy * frac
             if self.ball_y < BALL_R:
                 self.ball_y, self.ball_vy = BALL_R, abs(self.ball_vy)
             elif self.ball_y > VIEW_H - BALL_R:
@@ -274,6 +350,7 @@ class Table:
         off = (self.ball_y - paddle_y) / (PADDLE_H / 2)
         self.ball_vy = float(np.clip(off, -1.0, 1.0)) * BALL_VY_MAX
         self.rally += 1
+        self.run_score += SCORE_PER_RETURN
         return event
 
     def _point(self, winner):
@@ -281,9 +358,12 @@ class Table:
         self.score[winner] += 1
         self._n += 1
         mean_dy = float(np.mean(self._dys)) if self._dys else 0.0
+        run = int(self.run_score)
+        best = run > self.hi_score
+        self.hi_score = max(self.hi_score, run)
         entry = {"id": self._n, "rally": self.rally, "winner": winner,
                  "mean_dy": round(mean_dy, 4), "rig": self.rig,
-                 "at": round(time.time(), 2),
+                 "at": round(time.time(), 2), "run_score": run, "best": best,
                  "score": dict(self.score)}
         entry["line"] = line(entry)
         self.log.append(entry)
@@ -380,12 +460,13 @@ class Table:
         """Small enough to ride the heartbeat several times a second."""
         with self.lock:
             held = self._seat is not None and not self._expired(time.time())
-            return {"seq": self.seq, "rig": self.rig, "held": held,
+            return {"seq": self.seq, "rig": self.rig, "aim": self.aim, "held": held,
                     "ball": [round(self.ball_x, 1), round(self.ball_y, 1)],
                     "fish_y": round(self.fish_y, 1),
                     "visitor_y": round(self.visitor_y, 1),
                     "drift": self._dir, "rally": self.rally,
                     "score": dict(self.score),
+                    "run_score": int(self.run_score), "hi_score": self.hi_score,
                     # the geometry too, so the page can draw the table from the
                     # feed instead of keeping its own copy of these constants
                     # and drifting out of step with the image the fish sees
@@ -422,15 +503,70 @@ def smoke():
     assert np.array_equal(a, c), "render is not deterministic in phase"
 
     # -- the rig aims at the ball, and holds still inside the deadband ----
-    t.fish_y, t.ball_y = 400.0, 700.0
-    assert t.grating_dir() == +1, "ball below the paddle should drift the floor down"
-    t.ball_y = 100.0
-    assert t.grating_dir() == -1, "ball above the paddle should drift the floor up"
-    t.ball_y = 400.0 + DEADBAND / 2
-    assert t.grating_dir() == 0, "inside the deadband the floor holds still"
-    t.rig = False
-    assert t.grating_dir() == 0, "with the rig off there is no grating to aim"
-    t.rig = True
+    full = Table(aim=1.0)
+    full.fish_y, full.ball_y = 400.0, 700.0
+    assert full.grating_dir() == +1, "ball below the paddle should drift the floor down"
+    full.ball_y = 100.0
+    assert full.grating_dir() == -1, "ball above the paddle should drift the floor up"
+    full.ball_y = 400.0 + DEADBAND / 2
+    assert full.grating_dir() == 0, "inside the deadband the floor holds still"
+    full.rig = False
+    assert full.grating_dir() == 0, "with the rig off there is no grating to aim"
+
+    # -- the duty cycle withholds the rig, and does it deterministically --
+    # the deadband is checked first, so a ball this far out is always aimable
+    # and every 0 below is the duty cycle and not the deadband
+    for aim, want in ((1.0, 12), (0.5, 6), (0.25, 3), (0.0, 0)):
+        d = Table(aim=aim)
+        d.fish_y, d.ball_y = 400.0, 700.0
+        fired = [d.grating_dir() for _ in range(12)]
+        assert sum(abs(x) for x in fired) == want, (aim, fired)
+        assert set(fired) <= {0, +1}, f"aim must not flip the sign: {fired}"
+        again = Table(aim=aim)
+        again.fish_y, again.ball_y = 400.0, 700.0
+        assert [again.grating_dir() for _ in range(12)] == fired, "duty cycle is not deterministic"
+    assert Table(aim=5.0).aim == 1.0 and Table(aim=-1.0).aim == 0.0, "aim must clamp to [0,1]"
+
+    # -- sub-stepping must not change where the ball goes -----------------
+    # roam.py cuts a thought into RALLY_SUBSTEPS pieces so the ball is drawn
+    # moving instead of teleporting. If the pieces do not sum to the whole, the
+    # ball quietly changes speed and the 6.4-thoughts-to-cross figure the whole
+    # section quotes stops being true.
+    # Free flight only. Where a paddle or a wall is involved the two *should*
+    # differ - a sub-step catches the face before the ball has overshot it, so
+    # the bounce angle is off a different part of the bat. That is finer
+    # collision detection, not drift. What must not change is the speed.
+    whole, split = Table(aim=0.0), Table(aim=0.0)
+    for side in (whole, split):          # not `t` - `t` is the table the rest
+                                         # of smoke() is still asserting against
+        side.ball_x, side.ball_y, side.ball_vx, side.ball_vy = 640.0, 400.0, BALL_VX, 50.0
+    for _ in range(2):                      # 2 thoughts: no face, no wall
+        whole.advance()
+        for _ in range(16):
+            split.advance(1.0 / 16)
+    assert whole.score == {"fish": 0, "visitor": 0}, "the free-flight leg hit something"
+    assert abs(whole.ball_x - split.ball_x) < 1e-6, (whole.ball_x, split.ball_x)
+    assert abs(whole.ball_y - split.ball_y) < 1e-6, (whole.ball_y, split.ball_y)
+    assert int(whole.run_score) == int(split.run_score), "the score is not frac-linear"
+
+    # -- the dino score: ticks, jumps on a return, resets on a miss -------
+    t2 = Table(aim=0.0)
+    # vy pinned: _serve picks it at random, and a random vy decides whether the
+    # ball is still in front of the bat by the time it arrives
+    t2.ball_x, t2.ball_y, t2.ball_vx, t2.ball_vy, t2.fish_y = 200.0, 400.0, -BALL_VX, 0.0, 400.0
+    before = t2.run_score
+    assert t2.advance() == "return_fish", "the ball should have come back off the paddle"
+    assert t2.run_score >= before + SCORE_PER_RETURN, "a return has to pay"
+    t2.run_score = 5000.0
+    t2.ball_x, t2.ball_vx, t2.ball_vy = 200.0, -BALL_VX, 0.0
+    t2.fish_y, t2.ball_y = PADDLE_H / 2, VIEW_H - BALL_R    # bat high, ball low
+    assert t2.advance() == "point_visitor", "that should have been a miss"
+    assert t2.run_score == 0.0, "a miss has to cost the run"
+    # the losing thought still scores before the miss lands, so the record is
+    # the run plus that thought's tick - the point is that it survived the reset
+    assert t2.hi_score == 5000 + SCORE_PER_THOUGHT, t2.hi_score
+    assert f"{t2.hi_score:05d}" in t2.ring()[0]["line"], t2.ring()[0]["line"]
+    assert t2.ring()[0]["best"] is True, "first point over 0 has to be a best"
 
     # -- the paddle clamps to the table, both ends ------------------------
     t.fish_y = VIEW_H / 2

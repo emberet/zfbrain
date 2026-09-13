@@ -103,7 +103,7 @@
   <section id="pong" style="padding:clamp(48px,7vw,96px) 20px 0;max-width:1200px;margin:0 auto;box-sizing:border-box;">
     <p style="margin:0;font-size:13px;color:var(--color-accent-300);">&gt; play it</p>
     <h2 style="font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:clamp(22px,2.8vw,36px);line-height:1.15;letter-spacing:0;margin:8px 0 0;color:var(--color-bg);">It is not playing you. It is holding station in moving water.</h2>
-    <p style="margin:14px 0 0;max-width:64ch;color:var(--color-accent-200);line-height:24px;">A ball on a plain field moves almost nothing in this brain — the direction-selective cells decode a drift of 0.016, against the 0.08 it takes to move anything, and the startle cell fires instead. So the table is a rig, the kind a real lab builds: the floor under the ball is a grating, and a grating that drifts drives those cells to 0.78. One line of Python points the grating the way the ball lies. The fish supplies the reflex that holds a larva still in a current, and nothing else. It is not tracking the ball. It is holding station against a floor somebody else aimed.</p>
+    <p style="margin:14px 0 0;max-width:64ch;color:var(--color-accent-200);line-height:24px;">A ball on a plain field moves almost nothing in this brain — the direction-selective cells decode a drift of 0.016, against the 0.08 it takes to move anything, and the startle cell fires instead. So the table is a rig, the kind a real lab builds: the floor under the ball is a grating, and a grating that drifts drives those cells to 0.78. One line of Python points the grating the way the ball lies. The fish supplies the reflex that holds a larva still in a current, and nothing else. It is not tracking the ball. It is holding station against a floor somebody else aimed. That line is deliberately held back: aiming on every thought put the fish within 89 px of the ball on average, closer than its own paddle is tall, so it never missed and the game was not a game. It now aims on half the thoughts, which puts it 123 px out — a fifth further than the paddle can reach — and the reflex it is left with still decodes 0.30, near four times the threshold. What you are playing against is a reflex given half the help it could have had.</p>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:24px;margin-top:28px;">
       <div style="border:1px solid color-mix(in srgb, var(--color-bg) 30%, transparent);display:flex;flex-direction:column;min-width:0;">
         <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 12px;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);font-size:12px;">
@@ -113,6 +113,8 @@
         </div>
         <div style="position:relative;aspect-ratio:16/10;overflow:hidden;background:color-mix(in srgb, var(--color-bg) 6%, transparent);">
           <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:color-mix(in srgb, var(--color-bg) 18%, transparent);"></div>
+          <div style="position:absolute;left:0;top:0;bottom:0;width:50%;display:flex;align-items:center;justify-content:center;pointer-events:none;opacity:.16;">{{ pongFishMark }}</div>
+          <div style="position:absolute;right:10px;top:8px;display:flex;gap:14px;font-size:12px;letter-spacing:.18em;color:var(--color-accent-300);pointer-events:none;font-variant-numeric:tabular-nums;"><span>{{ pongHiLabel }}</span><span style="color:{{ pongRunColor }};">{{ pongRunLabel }}</span></div>
           <div data-zf="pong-fish" style="position:absolute;display:{{ pongDisplay }};left:{{ pongFishX }};top:{{ pongFishY }};width:{{ pongPaddleW }};height:{{ pongPaddleH }};transform:translate(-50%,-50%);background:var(--color-accent-300);"></div>
           <div data-zf="pong-visitor" style="position:absolute;display:{{ pongDisplay }};left:{{ pongVisitorX }};top:{{ pongVisitorY }};width:{{ pongPaddleW }};height:{{ pongPaddleH }};transform:translate(-50%,-50%);background:var(--color-bg);"></div>
           <div data-zf="pong-ball" style="position:absolute;display:{{ pongDisplay }};left:{{ pongBallX }};top:{{ pongBallY }};width:{{ pongBallSize }};aspect-ratio:1;border-radius:50%;transform:translate(-50%,-50%);background:var(--color-bg);"></div>
@@ -658,6 +660,9 @@ class Component extends DCLogic {
     const BLANK = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
     const n = (v) => (v == null ? dash : Number(v).toLocaleString());
     const hhmmss = (t) => new Date(t * 1000).toTimeString().slice(0, 8);
+    // the dinosaur's five digits. Anything not a number is a dash, like every
+    // other readout here — a score from memory would be a stale claim too.
+    const pad5 = (v) => (v == null ? dash : String(Math.max(0, Math.round(v))).padStart(5, '0'));
     const names = [['DSGC up','dsgc_up'],['DSGC down','dsgc_down'],['DSGC left','dsgc_left'],['DSGC right','dsgc_right'],['nMLF · bouts','nmlf'],['vSPN · turn','vspn'],['Mauthner · escape','mauthner']];
     const rates = (live && f.brain && f.brain.rates_hz) || {};
     const rMax = Math.max(1, ...names.map(([, k]) => rates[k] || 0));
@@ -779,15 +784,32 @@ class Component extends DCLogic {
       pongBallSize: pctOf(2 * ((pong && pong.ball_r) || 26), pw),
       pongDriftLabel: !pong ? '' : (!pong.rig ? 'rig off · flat field' : pong.drift > 0 ? 'floor drifting down' : pong.drift < 0 ? 'floor drifting up' : 'floor still'),
       pongDyLabel: pong && dyNow != null ? 'decoded drift ' + dyNow.toFixed(3) : '',
-      pongCaption: 'The light bar is the fish’s paddle and it moves by one number: the up/down asymmetry decoded off its direction-selective cells, times a fixed gain. There is no other path from the brain to it. Yours is the pale bar; you send one clamped y and nothing else.',
+      // the dinosaur's readout: how long this point has been alive, and the
+      // best since the fish last restarted. Zero-padded to five, HI on the
+      // left, and the live one brightens when it passes the record.
+      pongHiLabel: pong ? 'HI ' + pad5(pong.hi_score) : '',
+      pongRunLabel: pong ? pad5(pong.run_score) : '',
+      pongRunColor: pong && pong.run_score > pong.hi_score ? 'var(--color-bg)' : 'var(--color-accent-300)',
+      // the fish's own half, marked. Behind everything, at 16% — the table the
+      // fish actually sees is the rendered frame, and this is not in it.
+      pongFishMark: React.createElement('svg', {
+        viewBox: '-7 0 31 12', width: 132, height: 52, 'aria-hidden': true,
+        style: { overflow: 'visible' } },
+        React.createElement('path', { key: 'b', d: 'M22 6 C18 1.6 10 1.6 4.5 6 C10 10.4 18 10.4 22 6 Z',
+          fill: 'var(--color-accent-300)' }),
+        React.createElement('path', { key: 't', d: 'M5.5 6 L-2 2.2 L-0.6 6 L-2 9.8 Z',
+          fill: 'var(--color-accent-300)' })),
+      pongCaption: 'The light bar is the fish’s paddle and it moves by one number: the up/down asymmetry decoded off its direction-selective cells, times a fixed gain. There is no other path from the brain to it. Yours is the pale bar; you send one clamped y and nothing else. The score is the dinosaur’s — it counts how long the two of you keep the ball alive, not who is winning, and a miss resets it. HI is the best since the fish last restarted, and a restart forgets it.',
       pongPoints: (s.pongPoints || []).slice(0, 6).map((p) => ({ t: hhmmss(p.at), msg: p.line, color: p.winner === 'fish' ? 'var(--color-bg)' : 'var(--color-accent-200)' })),
       pongPointsEmpty: (s.pongPoints || []).length ? '' : (pong ? 'no point has finished yet' : 'nothing to transcribe'),
       pongScore: [
+        ['this point', pong ? pad5(pong.run_score) : dash],
+        ['best so far', pong ? pad5(pong.hi_score) : dash],
+        ['returns this point', pong ? n(pong.rally) : dash],
         ['the fish', pong ? n(pong.score.fish) : dash],
         ['the visitors', pong ? n(pong.score.visitor) : dash],
-        ['returns this point', pong ? n(pong.rally) : dash],
-        ['points played', n(stats.points)],
-        ['thoughts per rally', s.pongThoughts != null ? n(s.pongThoughts) : dash],
+        ['rig aims', pong ? (pong.aim > 0 ? Math.round(pong.aim * 100) + ' % of thoughts' : 'never') : dash],
+        ['rally lasts, at most', s.pongThoughts != null ? n(s.pongThoughts) + ' thoughts' : dash],
       ].map(([name, value]) => ({ name, value })),
       learning: [
         ['rules running', rules.length ? rules.map((r) => ruleNames[r] || r).join(', ') : (live ? 'habituation only' : dash)],
@@ -811,7 +833,7 @@ class Component extends DCLogic {
         { lead: 'The counts are the larva’s. The wiring is not.', body: 'A real 7-day-old zebrafish has 187,053 cell bodies and about 39 million synapses — those are the numbers in the header, and there are that many neurons running above, each one a leaky integrate-and-fire unit with ~208 synapses, laid out in the shape of the larva. But the graph is synthetic: the electron-microscope reconstruction is still being proofread and we do not have it yet. The header will say whose connectome it is the day that export is in. NOTEPAD.md tracks it.' },
         { lead: 'It runs hot.', body: 'A randomly wired brain this size has a very narrow band between silent and saturated — a real connectome’s structure is what normally keeps it there. Ours sits near the top of that band: a third of the neurons fire in any 5 ms window, the spinal cord runs harder than a larva’s would, and the fish startles more often than it swims. The alternative was to invent a stabiliser, and we would rather show you the honest number.' },
         { lead: 'The learning is real, and it is not aimed at anything.', body: 'Five mechanisms; the play-it section above lists which of them are actually switched on right now. Synaptic depression on the sensory inputs, the real larval kind — every spike spends a little resource that recovers over ~20 s, so a held flash stops startling the Mauthner cell. A second, slower pool behind it that takes ten minutes to refill. A startle that restores both, which is why a surprise undoes an hour of boredom. Neurons that trim their own excitability toward a set rate — a threshold that can only rise, never fall, so it can make the brain quieter and never louder. And Hebbian change across the 6.8 million synapses leaving the retina, where the total current each cell delivers is held exactly constant, so it can change which cells it speaks to but never how loudly. No reward signal is invented. It amplifies what it already does, not what works.' },
-        { lead: 'It is not trying to win at the table.', body: 'The paddle is the optomotor reflex — what a larva uses to hold station in moving water — pointed at a drifting floor that a line of Python aims for it. We measured whether the plasticity makes it better at that: thirty rallies with the Hebbian rule off, thirty with it on. The synapses moved and the play did not, by less than the noise the same run shows against itself. That null is printed above rather than papered over, and it is what a reward-free rule should be expected to do.' },
+        { lead: 'It is not trying to win at the table.', body: 'The paddle is the optomotor reflex — what a larva uses to hold station in moving water — pointed at a drifting floor that a line of Python aims for it. We measured whether the plasticity makes it better at that: thirty rallies with the Hebbian rule off, thirty with it on. The synapses moved and the play did not, by less than the noise the same run shows against itself. That null is printed above rather than papered over, and it is what a reward-free rule should be expected to do. The rig is also deliberately handicapped: aiming on every thought, it sat closer to the ball than its own paddle is tall and never missed, so it now aims on half of them. And the score counts how long the ball stayed alive, not who won — because nothing in the fish is counting either.' },
         { lead: 'The feed is live only while the fish is running.', body: 'What you see above is streamed from one machine running roam.py. When it is off, this page says asleep; it never replays or invents telemetry.' },
         { lead: 'The words are a narrator.', body: 'The fish has no language. Posts are written by a language model handed real telemetry and live chain numbers; a draft whose numbers are not in that packet is thrown away.' },
         { lead: 'It has no goals.', body: 'No reward circuit feeds back. What you see is reaction, not intent; the goal is set outside and read honestly.' },

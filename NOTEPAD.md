@@ -494,6 +494,116 @@ habituates with all four on (215 → 120 Hz); endpoints refuse a 3 KB body on th
 header without reading it, second joiner gets 409, bad token 403, everything
 404s without `ZF_PONG`.
 
+## 7e · The table, played (2026-09-14)
+
+Shipped it, then played a point against the live fish and lost 6–1. The trace is
+the whole of round two:
+
+```
+  t   ball y   fish y   floor   dy
+ 1.2     291      400   still   -0.005
+ 2.4     338      400    down   -0.010      <- an order of magnitude under 0.08
+ 6.0     498      475    down   -0.756
+ 7.1     521      560      up   +0.937      <- reversed in one thought
+```
+
+`dy` is tracking **the floor**, not the ball, and it does not pretend otherwise.
+That is the feature working as designed — but it also meant the fish never
+missed, which is the thing the next four changes were about.
+
+### The rig aims less now, and win% was the wrong way to decide
+
+"It's auto-hitting the ball." It was. The fix is a **duty cycle**, not a weaker
+push, and the reason is the matched filter: the grating steps exactly one lag
+(218 px) or it does not step, and a smaller step lands off the **null in `up`**
+and drives both channels. There is no strength to turn down — only *how often*.
+A Bresenham accumulator, not an RNG, because the fish is a closed loop and a
+random floor is a different experiment every rally.
+
+`tools/rally.py --fair` puts a *tracking* visitor on the other side (the old
+`play()` parked it at the centre, which the fish beat 169–73) seeing the ball one
+thought late, and sweeps:
+
+```
+ aim    |dy|   paddle-ball   fish win%
+1.00   0.566      89.5 px      59.5%
+0.75   0.435     111.4 px      65.1%
+0.50   0.299     122.7 px      48.1%
+0.25   0.173     154.1 px      46.0%
+0.00   0.005     178.1 px      47.8%
+```
+
+**Do not read the win% column.** At aim 0.00 the rig is off, |dy| is 0.005 and
+the paddle is effectively still — and the fish *still* takes 47.8%. That column
+measures this opponent missing, not the fish playing, and anything tuned against
+it would be tuned against noise. The two columns that mean something are
+monotonic:
+
+- **paddle-ball must exceed the paddle's own reach**, `PADDLE_H/2 + BALL_R` =
+  **101 px**, or the fish is within range of the ball on average and looks like
+  it is auto-hitting. That is the whole of "it's auto-hitting the ball", as a
+  number. Rules out 1.00; 0.75 only just clears.
+- **|dy| must stay well clear of 0.08**, or the paddle stops being visibly the
+  fish's doing and the section loses its point.
+
+`AIM_DUTY = 0.5` clears both with margin (122.7 px, 0.299) and `ZF_PONG_AIM`
+overrides it. Live confirmation: the same stationary-paddle soak that gave
+169–73 now gives **10–9**.
+
+### Three things found by making the ball smooth
+
+The ball used to teleport ~218 px once a thought. It is now cut into
+`RALLY_SUBSTEPS = 16` — *physics only*: the grating still steps one lag per
+thought and the retina still samples once per thought, so nothing the brain is
+shown changed.
+
+- **`Sim.run()` does not tick after the final chunk** (`if done < n_steps:
+  tick()`). With `tick_every=25, n_steps=400` you get **15** ticks, not 16 — so
+  every thought would have quietly lost a sixteenth of the ball's speed. Paid as
+  an explicit remainder `advance(1.0 - spent)` after `run()` returns.
+- **Sub-stepping legitimately changes bounce angles**, because a sub-step catches
+  the paddle face before the ball has overshot it. The first assertion pinned
+  whole-step and sub-step to identical positions and failed; the honest test is
+  *free flight only*, plus that the score stays linear in `frac`.
+- **Smoothing the frame does not smooth the table.** `_publish_frame` was being
+  called at `RALLY_FPS` and the rendered `/frame.jpg` did get smooth — but the
+  page draws its table from `state["pong"]`, not from the camera, and the
+  heartbeat was still going out once a thought. So *the thing you actually play
+  on* was unchanged. Fixed by republishing the heartbeat from the same tick,
+  exactly as `_camera_tick` already does for the cursor, and by raising the SSE
+  loop's rate cap from `CAM_FPS` to `max(CAM_FPS, RALLY_FPS)` — a cap, not a
+  pace, so the browsing path still goes out at 6/s. Measured at a watching
+  client over 20 s with the seat held: **the ball moves 22.3 px between
+  updates, against ~218 px before** — one matched-filter lag was the whole of
+  the old animation.
+
+### The score is the dinosaur's
+
+Fish-vs-visitor was the wrong scoreboard for a fish that is not trying to win.
+Chrome's dino counts **distance survived** and keeps a HI, which is exactly the
+interesting quantity here: how long the two of you kept the ball alive. Ticks
+per sub-step, +100 on a return, resets on a miss. HI lives in the process — a
+restart forgets it, and the page says so rather than pretending it persists.
+The transcript lines carry the five digits (`… 00415.`), like the dino's.
+
+### Cloudflare blocks `Python-urllib`
+
+An hour, nearly misread as a seat or rate-limit bug: `POST /pong/join` returned
+**403 before it ever reached the fish**, while the identical `curl` worked. It
+is the default user agent. Any scripted client of `live.zfbrain.online` needs a
+browser UA; browsers are unaffected, so nothing on the site ever saw it.
+
+### Verified, round two
+
+`pong smoke OK` with the duty cycle, sub-step and dino-score assertions added;
+`tools/rally.py --soak` re-run on the sub-stepped path, **`soak OK`, 8/8**
+(worst row L1 4.77e-07 against the 1e-3 gate, theta one-sided at
+[0.000, 1.042] mV, mean |dy| 0.297 against the 0.08 gate) — and the same
+stationary-paddle soak that read **169–73** before now reads **207–181**, which
+is the handicap doing what it was measured to do. Live: joined the restarted
+fish, took the point 5–2, transcript `5 returns before the point ended. Mean
+decoded drift 0.231; the visitor took it. 00973 — new best.`
+
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
       gentle anti-founder-mode behavior.

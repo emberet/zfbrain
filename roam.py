@@ -154,6 +154,18 @@ DEFAULT_ORIGINS = ("https://zfbrain.online,https://www.zfbrain.online,"
 # and only runs while a visitor is holding the seat, so browsing stays what the
 # fish does with its life.
 RALLY_THOUGHTS = int(os.environ.get("ZF_PONG_THOUGHTS", "40"))
+# How many pieces a thought's worth of ball is cut into. Physics only: the
+# grating still steps one matched-filter lag per thought and the retina still
+# samples once per thought, so this changes how the ball is drawn between
+# samples and nothing the brain is given. 16 at SIM_STEPS=400 is one sub-step
+# per 25 brain steps, which is the slice the camera already ran on.
+RALLY_SUBSTEPS = 16
+# the table is worth more frames than a web page: a page thought is one
+# screenshot that barely changes, a rally is the ball actually moving. This
+# paces the heartbeat too, because the page draws its table from state["pong"]
+# rather than from the frame - so it is 2.5x CAM_FPS out to every SSE client,
+# but only while a visitor is holding the seat, which is not the steady state.
+RALLY_FPS = float(os.environ.get("ZF_PONG_FPS", "15"))
 POST_MAX = 2048                   # bytes; checked before the body is read
 
 
@@ -308,7 +320,15 @@ class Roamer:
         if _env_flag("ZF_PONG"):
             import pong as pongmod
             self.pong = pongmod
-            self.table = pongmod.Table(rig=not _env_flag("ZF_PONG_NORIG"))
+            # ZF_PONG_AIM is how much of the time the rig may aim, and it is the
+            # difficulty: the floor drifting is the only thing that moves the
+            # fish's paddle. Out of range or unparseable falls back to the
+            # measured default rather than refusing to start the table.
+            try:
+                aim = float(os.environ.get("ZF_PONG_AIM", pongmod.AIM_DUTY))
+            except ValueError:
+                aim = pongmod.AIM_DUTY
+            self.table = pongmod.Table(rig=not _env_flag("ZF_PONG_NORIG"), aim=aim)
         self.graph_doc = self._graph_doc()
         threading.Thread(target=self._chain_loop, daemon=True).start()
 
@@ -785,26 +805,54 @@ class Roamer:
                 for group, hz in self.retina.rates(out, motion_gain=1.5).items():
                     self.sim.set_drive(self.groups.get(group, []), hz)
 
+                # the ball crosses while the brain thinks, in RALLY_SUBSTEPS
+                # pieces, so the rally looks like play rather than a slideshow.
+                # Physics only - the retina already sampled, above, and will not
+                # sample again until the next thought.
+                events, spent = [], [0.0]
+
                 def tick():
-                    # keep the live panel at camera rate while the brain thinks,
-                    # so the rally plays as video rather than one frame a second
-                    if time.time() - self._cam_at < 1.0 / max(1.0, CAM_FPS):
+                    step = min(1.0 / RALLY_SUBSTEPS, 1.0 - spent[0])
+                    if step > 0.0:
+                        spent[0] += step
+                        events.append(table.advance(step))
+                    # publishing is gated separately: the ball moves on every
+                    # sub-step, the camera only when the frame budget allows
+                    if time.time() - self._cam_at < 1.0 / max(1.0, RALLY_FPS):
                         return
                     self._publish_frame(self.pong.render(table.snapshot()))
+                    # and the heartbeat with it. The page draws its table from
+                    # state["pong"], not from the camera frame, so without this
+                    # the thing you are actually playing on still moves once a
+                    # second no matter how smooth the rendered frame is. Same
+                    # trick _camera_tick uses for the cursor: the brain fields
+                    # are the last window's and unchanged, the table is live.
+                    if self._last is not None:
+                        self.feed.publish(self.heartbeat(*self._last))
 
-                detail = self.sim.run(SIM_STEPS, tick=tick, tick_every=CAM_SLICE)
+                detail = self.sim.run(SIM_STEPS, tick=tick,
+                                      tick_every=max(1, SIM_STEPS // RALLY_SUBSTEPS))
+                # run() does not tick after the final chunk, so a thought always
+                # ends a little short; pay the remainder here or the ball loses
+                # a sixteenth of its speed every thought
+                if spent[0] < 1.0:
+                    events.append(table.advance(1.0 - spent[0]))
                 for g in ("nmlf", "vspn", "mauthner"):
                     hz = detail["rates_hz"].get(g, 0.0)
                     self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
                 dec = self.sim.decode(detail["rates_hz"], rest=self._rest)
                 self.stats["brain_steps"] += SIM_STEPS
                 table.move_fish(dec["dy"])
-                event = table.advance()
                 played += 1
-                if event and event.startswith("point_"):
-                    entry = table.ring()[0]
-                    self.stats["points"] += 1
-                    self._event("pong", entry["line"][:96])
+                # any sub-step could have returned the ball or ended the point,
+                # and a thought can hold both, so count them all rather than
+                # just the first - the old single-step call could only ever
+                # produce one and this is where that assumption would rot
+                for event in (e for e in events if e):
+                    if event.startswith("point_"):
+                        entry = table.ring()[0]
+                        self.stats["points"] += 1
+                        self._event("pong", entry["line"][:96])
                 self._publish(detail, dec, out, None)
         finally:
             self._cam_page = saved
@@ -1194,9 +1242,14 @@ def make_handler(roamer):
                         seen = state["seq"]
                         self.wfile.write(b"data: " + json.dumps(state).encode() + b"\n\n")
                     self.wfile.flush()
-                    # the cursor rides the heartbeat, so this has to keep up
-                    # with the camera rather than the brain
-                    time.sleep(max(0.0, 1.0 / max(1.0, CAM_FPS) - (time.time() - t0)))
+                    # the cursor and the ball both ride the heartbeat, so this
+                    # has to keep up with whichever of them is publishing
+                    # faster rather than with the brain. It is a cap, not a
+                    # pace - wait_for_new blocks until there is something new -
+                    # so raising it costs nothing on the browsing path, which
+                    # still publishes at CAM_FPS.
+                    time.sleep(max(0.0, 1.0 / max(1.0, CAM_FPS, RALLY_FPS)
+                                   - (time.time() - t0)))
             except (BrokenPipeError, ConnectionResetError, OSError):
                 pass
             finally:
