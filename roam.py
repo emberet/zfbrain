@@ -275,6 +275,7 @@ class Roamer:
         self._mask_at = 0.0
         self._life = 0
         self._seed = HOME_SEEDS[0]
+        self._walled = set()       # hosts that showed a bot wall this run; see _pick_seed
         self._quiet_turns = 0
         self._cursor = (VIEW_W // 2, VIEW_H // 2)
         self._page_url = None
@@ -450,27 +451,78 @@ class Roamer:
             self._event("look", "no real links in reach · tried them all")
         return False
 
+    # The interstitial these wear changed under us. The old strings below were
+    # written for "Checking your browser before accessing…"; the current
+    # Cloudflare/Akamai managed challenge is titled "Just a moment..." and says
+    # none of them, so it read as an ordinary page with two links on it. The
+    # fish would then spend 15 quiet turns finding nothing clickable, wander to
+    # another seed, and — since three of HOME_SEEDS are walled — often land on
+    # one again. Measured 2026-09-13 on nga.gov, si.edu and loc.gov: title
+    # "Just a moment...", 2 `a[href]`, and the body phrases below.
+    WALL_TITLES = ("captcha", "verify you are human", "i'm not a robot",
+                   "challenge", "cf-error", "just a moment",
+                   "attention required")
+    WALL_TEXT = ("cf-challenge", "enable javascript and cookies",
+                 "checking your browser before accessing",
+                 "verify you are human", "i'm not a robot",
+                 "press and hold the button", "captcha required",
+                 "performing security verification",
+                 "security service to protect against malicious bots",
+                 "please continue when verification is complete",
+                 "request verification")
+
+    # A wall is a *thin* page, and that is the part worth testing. Matching on
+    # words alone was a live bug: "captcha" and "challenge" are substrings of
+    # ordinary titles, so en.wikipedia.org/wiki/Challenger_Deep — 1,931 links
+    # and 127 KB of text — read as a captcha wall and the fish fled it. Every
+    # real wall measured on 2026-09-13 had <= 2 links and <= 300 bytes of text;
+    # the content pages that tripped the words had 212-1,931 links and
+    # 11-127 KB. Three orders of magnitude apart, so the gate is generous.
+    WALL_MAX_LINKS = 8
+    WALL_MAX_TEXT = 2500
+
     def _is_captcha_page(self, page):
+        """True only for an interstitial: the words *and* the thinness. A page
+        that merely talks about captchas is a page the fish may happily read."""
         try:
             title = page.title().lower()
         except Exception:  # noqa: BLE001
             title = ""
-        if any(w in title for w in ("captcha", "verify you are human",
-                                    "i'm not a robot", "challenge", "cf-error")):
-            return True
         try:
             txt = page.evaluate(
                 "() => (document.body ? document.body.innerText : '').toLowerCase()")
+            links = page.evaluate("() => document.querySelectorAll('a[href]').length")
         except Exception:  # noqa: BLE001
             return False
-        return any(w in txt for w in ("cf-challenge", "enable javascript and cookies",
-                                      "checking your browser before accessing",
-                                      "verify you are human", "i'm not a robot",
-                                      "press and hold the button",
-                                      "captcha required"))
+        if links > self.WALL_MAX_LINKS or len(txt) > self.WALL_MAX_TEXT:
+            return False        # too much page here to be an interstitial
+        return (any(w in title for w in self.WALL_TITLES)
+                or any(w in txt for w in self.WALL_TEXT))
+
+    def _pick_seed(self, avoid=None):
+        """A seed to start a life at or dart to, skipping hosts that have shown
+        this process a bot wall. Falls back to the full list rather than
+        returning nothing: a fish with nowhere to go is worse than one that
+        retries a wall, and a site can stop challenging us at any time."""
+        pool = [s for s in HOME_SEEDS
+                if s != avoid and urlsplit(s).netloc.lower() not in self._walled]
+        if not pool:
+            pool = [s for s in HOME_SEEDS if s != avoid] or list(HOME_SEEDS)
+        return random.choice(pool)
+
+    def _mark_walled(self, url):
+        """Remember a host that walled us, so _pick_seed stops sending the fish
+        back into it. Per-process and not persisted — a restart gives every
+        site a fresh hearing."""
+        host = urlsplit(url).netloc.lower()
+        if host and host not in self._walled:
+            self._walled.add(host)
+            print(f"bot wall at {host} · dropped from the seed pool "
+                  f"({len(self._walled)} walled)", file=sys.stderr)
+        return host
+
     def _escape_to_fresh(self, page):
-        others = [h for h in HOME_SEEDS if h != self._seed]
-        seed = random.choice(others) if others else HOME_SEEDS[0]
+        seed = self._pick_seed(avoid=self._seed)
         self._seed = seed
         self._event("escape", f"Mauthner fired · darted to {_short_url(seed)}")
         self._go_seed(page, seed, "escape")
@@ -525,7 +577,7 @@ class Roamer:
         page = ctx.new_page()
         page.set_default_timeout(15000)
         page.on("popup", lambda p: p.close())  # no popups, one page per life
-        self._go_seed(page, random.choice(HOME_SEEDS), "new life")
+        self._go_seed(page, self._pick_seed(), "new life")
         seed = self._seed
         self._life += 1
         self._quiet_turns = 0
@@ -791,7 +843,10 @@ class Roamer:
                             self._event("fence", f"{host} is off the allowlist · back to seed")
                             self._go_seed(page, self._seed, "fence: allowlist")
                         elif self._is_captcha_page(page):
-                            self._event("fence", "captcha wall · dart away")
+                            # remember it before darting: without this the fish
+                            # keeps being sent back to the same three seeds
+                            self._mark_walled(page.url)
+                            self._event("fence", f"{host} is a bot wall · dart away")
                             self._escape_to_fresh(page)
                         time.sleep(0.15)
                     self._event("life", f"life {self._life} · hop budget spent")

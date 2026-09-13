@@ -332,6 +332,43 @@ is out of `.env` and the process no longer has an inbound path.
   Solana seed briefly sat in an untracked, stageable file. `.env.*` now covers
   it. That fix stays.
 
+## 7c · Bot walls — the fish was fleeing Wikipedia (2026-09-13)
+Noticed the fish stuck: 1 page in 75 s, event ring nothing but
+`look: no real links in reach` → `wander` → `escape`. Two separate bugs, both
+found by actually loading the pages rather than reading the code.
+
+**1. The interstitial changed under us.** `_is_captcha_page` was written for
+"Checking your browser before accessing…". The current Cloudflare/Akamai
+managed challenge is titled **"Just a moment..."** and says none of the old
+strings, so it read as an ordinary page that happened to have two links. The
+fish burned 15 quiet turns finding nothing clickable, wandered, and — three of
+the 24 `HOME_SEEDS` being walled (`nga.gov`, `si.edu`, `loc.gov`; `eol.org`
+since) — often landed straight on another one. Added the measured strings, and
+`_walled` + `_pick_seed()` so a host that walls us drops out of the seed pool
+for the rest of the process (not persisted: a restart gives every site a fresh
+hearing, and the pool falls back to the full list rather than ever emptying).
+
+**2. The word matching was hitting articles** — pre-existing, and the first fix
+made it permanent by blacklisting the host. `"captcha"` and `"challenge"` are
+substrings of ordinary titles, so **en.wikipedia.org/wiki/Challenger_Deep**
+(1,931 links, 127 KB) was a "captcha wall" and the fish fled it. The whole of
+`en.wikipedia.org` got dropped from the seed pool on the first run of the fix,
+which is how it surfaced at all.
+
+The discriminator is **thinness, not vocabulary**: every real wall measured had
+<= 2 links and <= 300 bytes of text; the content pages that tripped the words
+had 212-1,931 links and 11-127 KB. `WALL_MAX_LINKS = 8` / `WALL_MAX_TEXT =
+2500` sits orders of magnitude clear of both. Verified 4/4 walls caught, 20/20
+real pages clean, including all four Wikipedia articles that used to trip.
+
+- Throughput after: **16 pages in the first 75 s**, against 1 before.
+- Worth re-running that probe occasionally. These strings are a snapshot of
+  what the CDNs served on one day; the last set lasted until it didn't, and the
+  failure mode is silent — the fish just gets quietly worse at browsing.
+- `HOME_SEEDS`' own comment says "no captcha-walled sites here". That was true
+  when written. Four of them have walled since, so the list wants re-checking
+  rather than trusting the comment.
+
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
       gentle anti-founder-mode behavior.
