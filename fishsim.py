@@ -83,8 +83,45 @@ ESCAPE_BURST = float(os.environ.get("ZF_ESCAPE_BURST", "1.8"))    # × baseline 
 # silent population still needs a real excursion.
 NMLF_REST, VSPN_REST = 30.0, 30.0   # fallbacks when the roamer has no baseline yet
 SPAN_FACTOR, MIN_SPAN = 1.5, 8.0
-# habituation: short-term depression on sensory-input synapses
-DEP_U = float(os.environ.get("ZF_DEP_U", "0.002"))      # resource used per presynaptic spike
+# habituation: short-term depression on sensory-input synapses.
+#
+# This was 0.002, which sounds small and is not: d settles to 1/(1 + r*U*tau),
+# so at a resting 9 Hz it parks the sensory synapses at 0.735 of their
+# calibrated weight, permanently. tools/silence.py --sweep shows what that
+# costs - nMLF falls 4.90 -> 0.00 Hz between a delivered factor of 1.00 and
+# 0.70, taking vSPN and the spinal cord with it. The whole brain behind the
+# eyes was dark, and had been since long before any of the slow rules existed.
+#
+# Raising weight_scale does not fix it: a global rescale strengthens the
+# inhibition onto nMLF exactly as fast as the excitation, so nMLF reads 0.0 Hz
+# even at twice the calibrated scale with the spinal cord saturated (measured -
+# see calibrate.py --dry). The only lever that works is the ratio of sensory
+# drive to recurrent background, which is what d is.
+#
+# So depression is sized to be use-dependent, which is what it is in a real
+# synapse anyway: barely there at rest, deeper when something is actually
+# hammering it. Measured at this U: 0.948 at rest, 0.870 under 25 Hz of optic
+# flow, 0.90 after ten flashes of the startle assay.
+#
+# That last number is the price, and it is worth stating plainly rather than
+# burying. Habituation of the startle got *shallower*: the flash train used to
+# take the Mauthner cell 210 -> 120 Hz and now takes it 220 -> 200. The two
+# effects cannot be separated by choosing U better, because they are the same
+# arithmetic read twice. A flash raises the sensory populations to ~55 Hz for
+# 0.4 s, so it costs about 22 presynaptic spikes; twenty seconds of resting
+# 9 Hz drive costs 180. Ten flashes are therefore worth rather less than one
+# time constant of simply being awake, whatever U is. Deep train habituation
+# needs U ~ 0.005, and 1/(1 + 9*0.005*20) = 0.51 is a brain with nothing behind
+# the eyes.
+#
+# The choice is between an ornament and a sense. At U = 0.002 the fish is blind
+# to motion - 25 Hz of optic flow depresses d to 0.5, so nMLF and vSPN read
+# 0.1 Hz whether the world is moving or not, and that was measured on a graph
+# re-bisected for it, so it is not a calibration artefact. At 0.0003 they go
+# 0.2 -> 6.5 Hz when the world moves. A fish that cannot see motion cannot
+# swim, browse or play, so motion wins and the startle habituates by 9%
+# instead of 43%. smoke() asserts the 9%, and says why.
+DEP_U = float(os.environ.get("ZF_DEP_U", "0.0003"))     # resource used per presynaptic spike
 DEP_TAU = float(os.environ.get("ZF_DEP_TAU", "20.0"))   # seconds to recover
 PLASTIC_GROUPS = ("retina", "dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right")
 
@@ -96,9 +133,14 @@ PLASTIC_GROUPS = ("retina", "dsgc_up", "dsgc_down", "dsgc_left", "dsgc_right")
 # in .env, the same way ZF_ALLOW_BROWSER is.
 #
 # Each rule is bounded so that it *cannot* move the one number this repo
-# balances on. build/calibration.json holds weight_scale = 0.050141 and
-# calibrate.py records that the same graph is silent at 0.027 and saturated at
-# 0.054 — roughly +8% of headroom above the calibrated value. So:
+# balances on. build/calibration.json holds weight_scale = 0.051397, and the
+# headroom is not the +8% up to saturation that used to be quoted here — it is
+# the far smaller margin *downwards*, because this graph dies quietly long
+# before it saturates. Measured on that scale: 0.7% off it takes the resting
+# spinal cord from 20 Hz to 2, and a 3% cut in what the eye delivers takes it to
+# exactly 0.0. So the bound that matters on every rule below is how much current
+# it can remove, and calibrate.py is now run with these flags on for the same
+# reason. So:
 #
 #   * intrinsic plasticity is ONE-SIDED. theta >= 0 always, so a threshold may
 #     rise above -45 mV but never fall below it: the rule can only ever make
@@ -125,7 +167,23 @@ IP_ETA = float(os.environ.get("ZF_IP_ETA", "0.0006"))          # mV of threshold
 IP_MAX = float(os.environ.get("ZF_IP_MAX", "3.0"))             # mV — the one-sided ceiling
 
 DEP2_ON = _flag("ZF_DEP_U2")                                   # second, slow depression pool
-DEP_U2 = float(os.environ.get("ZF_DEP2_U", "0.00012"))         # resource used per spike
+# 0.00012 was chosen to make the slow pool clearly visible in telemetry, and it
+# was far too big: at a resting 10 Hz it settles to d2 = 0.58, which multiplies
+# the fast pool's own 0.73 down to 0.42 and takes the delivered current off a
+# cliff. tools/silence.py --sweep measures that cliff - at 0.95 of the
+# calibrated weight nMLF is already halved, at 0.90 it is nearly out, and by
+# 0.70 nMLF, vSPN and the spinal cord all read exactly 0.0 Hz. So the slow
+# pool's entire budget is a few percent, not forty. 6e-6 was the first attempt
+# at that and it was still too big, by a factor that is worth writing down:
+# 3.1% at rest, and flipping ZF_DEP_U2 alone - nothing else - took the spinal
+# cord from 21.5 Hz to exactly 0.0. That is the whole contract above ("each rule
+# is bounded so that it *cannot* move the one number this repo balances on")
+# failing in one line, so the size is now set by what the contract can afford
+# rather than by what looks good in telemetry: 1.1% at rest, 2.4% under 25 Hz of
+# optic flow, which leaves the spinal cord at 24.5 Hz with all four rules on.
+# A second timescale is a slow drift under the fast pool, not a second collapse
+# on top of it.
+DEP_U2 = float(os.environ.get("ZF_DEP2_U", "0.000002"))        # resource used per spike
 DEP_TAU2 = float(os.environ.get("ZF_DEP2_TAU", "600.0"))       # ~10 minutes to recover
 
 SENS_ON = _flag("ZF_SENS")                                     # dishabituation on a startle
@@ -460,9 +518,14 @@ class FishSim:
 
         It is a *restore*, not a gain, and that is deliberate: d and d2 stay
         bounded above by 1.0 by construction, so delivered weight can never
-        exceed the calibrated value. The graph has about 8% of headroom above
-        weight_scale = 0.050141; a sensitization that multiplied weight by 1.5
-        would saturate the whole brain on the first flash.
+        exceed the calibrated value. A sensitization that multiplied weight by
+        1.5 would leave the envelope the calibration was measured in, in the one
+        direction nothing downstream checks — every other rule here can only
+        subtract, so `dead`/`thin` catch them, and there is no matching gate on
+        the way up short of `hot` at 350 Hz. (The headroom that actually binds on
+        this graph is downward, and it is small: at weight_scale = 0.051397, a
+        0.7% move takes the resting spinal cord from 20 Hz to 2, and a 3% cut in
+        what the eye delivers takes it to exactly 0.0.)
 
         The trigger has to be a *novel* startle, and that is not a nicety — get
         it wrong and the rule is exactly self-defeating. The flash that fires
@@ -638,6 +701,38 @@ class FishSim:
             self._sensitize(detail["rates_hz"].get("mauthner", 0.0), dt, n_steps)
         return detail
 
+    def settle_depression(self, dt=DT, window_steps=400, rounds=3, frames=4):
+        """Put both depression pools where minutes of running would put them,
+        without spending the minutes.
+
+        This exists because the obvious way to settle a brain - run it for a
+        while - is quietly wrong here. `d` relaxes with
+        tau_eff = 1/(1/DEP_TAU + r*DEP_U), about 15 s, and `d2`'s is ten
+        minutes. The 12-frame settle that calibrate.py and smoke() both used is
+        2.4 s: it leaves `d` at 0.96 when its steady state is 0.735, so every
+        assertion made there was made about a brain the fish is never actually
+        in. Waiting it out honestly costs ~370 frames per probe, which is
+        minutes of wall clock per bisection candidate - hence this.
+
+        For a neuron firing at a steady rate r, the fixed point is exact rather
+        than approximate:
+
+            d_ss = 1 / (1 + r * U * tau)
+
+        so measure r over a window and pin `d` to it. r barely moves once `d`
+        is near the fixed point, so a few rounds converge - and unlike a long
+        run, the result does not depend on how long you were willing to wait.
+        """
+        p = self.plastic
+        for _ in range(max(1, rounds)):
+            for _ in range(max(1, frames)):
+                self.run(window_steps, dt)
+            r = self._window_spikes / (window_steps * dt)
+            self.d[p] = 1.0 / (1.0 + r[p] * DEP_U * DEP_TAU)
+            if DEP2_ON:
+                self.d2[p] = 1.0 / (1.0 + r[p] * DEP_U2 * DEP_TAU2)
+        return self.run(window_steps, dt)
+
     # -- readout (the panels the live site shows) -------------------------
     def stream(self, dt=DT, window_steps=400):
         window_spikes = self.spike_counts.copy()
@@ -763,8 +858,12 @@ def _smoke(graph_path, groups_path, plastic):
 
     sim = FishSim(graph)
     page_drive(sim, flow=0.0)          # a page the fish is not moving
-    for _ in range(12):
-        d1 = sim.run(400)  # let the recurrent pools and the depression settle
+    # This was `for _ in range(12): sim.run(400)`, and the comment said it let
+    # the depression settle. It did not: 12 frames is 2.4 s and DEP_TAU is 20,
+    # so d was still ~0.96 on its way to 0.735 and every assertion below was
+    # made about a brain that had just opened its eyes. The fish spends its
+    # life at the fixed point, so that is where it has to be checked.
+    d1 = sim.settle_depression()
     r1 = d1["rates_hz"]
     # the Mauthner cell is meant to be silent between escapes — a larva's M-cell
     # fires once for a startle, not continuously; every other population lives
@@ -774,10 +873,13 @@ def _smoke(graph_path, groups_path, plastic):
     # particular `spinal` is deliberately not one of them. On the synthetic
     # graph that pool sits close enough to a bifurcation that a 0.0006 change
     # in d2 - four orders of magnitude smaller - swung it from 11.2 to 15.2 Hz.
-    # That is the graph being near-critical, which is what a brain calibrated
-    # between "silent at 0.027" and "saturated at 0.054" is supposed to be; it
-    # is not drift, and pinning a number to it would only produce a test that
-    # fails for reasons nobody can act on. Alive, not saturated, and the
+    # That is the graph being near-critical, which is what a randomly wired
+    # brain held together by one number is: at weight_scale = 0.051397 a 0.7%
+    # move takes this same pool from 20 Hz to 2. It is not drift, and pinning a
+    # number to it would only produce a test that fails for reasons nobody can
+    # act on. calibrate.py does hold spinal to a floor, because that is the one
+    # place a number like that is actionable: it can bisect for it. Here, alive,
+    # not saturated, and the
     # behavioural assertions below are what actually hold.
     print(f"[{label}{tag}] rest rates:", {g: r1[g] for g in NEED},
           f"habituation {d1['habituation']:.3f}"
@@ -807,18 +909,56 @@ def _smoke(graph_path, groups_path, plastic):
 
     sim3 = FishSim(graph, seed=3)
     page_drive(sim3, flow=0.0)
-    for _ in range(12):
-        base = sim3.run(400)["rates_hz"].get("mauthner", 0.0)
+    # same correction as above: the startle assay compares a flash against this
+    # resting baseline, so the baseline has to be the rested fish's, not a
+    # still-depleting transient's.
+    base = sim3.settle_depression()["rates_hz"].get("mauthner", 0.0)
+    d_before = float(sim3.d[sim3.plastic].mean())
     train = []
     for _ in range(10):  # ten flashes, 0.8 s apart — the classic startle-habituation assay
         train.append(flash(sim3))
         for _ in range(4):
             sim3.run(400)
+    d_after = float(sim3.d[sim3.plastic].mean())
     print(f"startle: mauthner {base:.1f} Hz at rest -> {train[0]:.1f} Hz on a flash (escape at {ESCAPE_HZ})")
-    print("habituation: flash train ->", " ".join(f"{m:.0f}" for m in train), "Hz")
+    print("habituation: flash train ->", " ".join(f"{m:.0f}" for m in train), "Hz",
+          f"(d {d_before:.3f} -> {d_after:.3f})")
     if real:
         assert train[0] >= max(5 * base, ESCAPE_HZ), "a whole-field flash should startle the Mauthner cell"
-        assert train[-1] < 0.6 * train[0], "ten flashes should habituate the startle"
+        # This read `train[-1] < 0.6 * train[0]` and it has been weakened on
+        # purpose, which is the kind of edit that deserves more than a shrug.
+        #
+        # The 0.6 was not a target anybody chose; it was a description of what
+        # a brain with DEP_U = 0.002 happened to do, and that brain was blind to
+        # motion (see the DEP_U comment for the measurement). Ten flashes cost
+        # the sensory synapses about 220 presynaptic spikes against the 180 that
+        # twenty seconds of merely being awake costs, so no value of U buys deep
+        # train habituation without parking the resting brain at d ~ 0.5 and
+        # switching off everything behind the eyes. Measured, not argued: at
+        # this U no protocol reaches 0.6 either - 20 flashes give 0.89, a 1 s
+        # ISI 0.91, a doubled flash 0.90, a 3x brighter flash 0.87.
+        #
+        # So the assay now asserts the three things that are actually true of
+        # habituation, rather than one number borrowed from a broken brain:
+        # the response goes down, it keeps going down, and the synapse it goes
+        # down through is measurably emptier afterwards. If the mechanism ever
+        # breaks, all three fail together.
+        assert train[-1] < 0.95 * train[0], \
+            f"ten flashes should habituate the startle: {train[0]:.0f} -> {train[-1]:.0f} Hz"
+        # Non-increasing *after the peak*, not from the first flash. The first
+        # version of this asserted plain monotonicity and the plastic run broke
+        # it immediately with 220 -> 230 -> 220 -> ..., which is not a fault: it
+        # is ZF_SENS doing exactly what it is for. Dishabituation restores the
+        # depleted resource on a startle, so an early flash can come back
+        # *stronger* before habituation takes over. Sensitisation first, then
+        # habituation, is the textbook dual-process shape, and an assertion that
+        # forbade it would be asserting the absence of a rule this repo ships.
+        peak = train.index(max(train))
+        tail = train[peak:]
+        assert all(b <= a + 1e-9 for a, b in zip(tail, tail[1:])), \
+            f"the startle should fall away after its peak, got {[round(m) for m in train]}"
+        assert d_after < d_before - 0.015, \
+            f"the flash train should deplete the sensory synapses: d {d_before:.3f} -> {d_after:.3f}"
 
     if plastic:
         # the two invariants the whole design rests on, checked after the brain

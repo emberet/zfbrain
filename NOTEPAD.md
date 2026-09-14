@@ -604,6 +604,141 @@ is the handicap doing what it was measured to do. Live: joined the restarted
 fish, took the point 5–2, transcript `5 returns before the point ended. Mean
 decoded drift 0.231; the visitor took it. 00973 — new best.`
 
+## 7f · The brain behind the eyes was switched off (2026-09-14)
+
+Maintenance check. Found the worst bug this repo has had, in production:
+**every population downstream of the driven sensory ones read exactly 0.0 Hz**,
+and had for days. Confirmed on the live feed before touching anything —
+`nmlf 0.0 vspn 0.0 other 0.0 spinal 0.0`, `habituation_slow 0.4032`, firing
+2.7%, and `scrolls 1` against `pages 485`. Nothing alerted, and the reason it
+went unnoticed is worth keeping: **clicks are decoded straight off the retina
+and never pass through the rest of the brain**, so the fish kept browsing,
+kept clicking, kept publishing frames. Only the scroll counter — the one
+behaviour that does route through nMLF — showed it, as a number nobody was
+reading. `escapes 0` looked fine and *was* fine, which made it worse.
+
+### One bug, three times: calibrating somewhere the fish never lives
+
+All three causes are the same mistake, and naming the family is the point:
+**measuring the brain at an operating point it does not occupy.**
+
+1. **A 2.4 s settle against a 20 s pool.** `smoke()` ran 12 frames and called
+   it settled; `d` was still ~0.96 on its way to 0.735. Every assertion was
+   made about a brain that had just opened its eyes. Fixed by
+   `FishSim.settle_depression()`, which jumps both pools to the closed-form
+   fixed point `d_ss = 1/(1 + r·U·τ)` from the measured rate instead of waiting.
+   **Verified against a 332 s ground-truth run: `d` 0.9344 vs 0.9346, 33× faster**
+   (`tools/warmstart_check.py`, kept).
+2. **`DEP_U`/`DEP_U2` sized by how they looked in telemetry, not by their
+   steady-state cost.** `DEP_U2 = 6e-6` spends 3.1% of delivered sensory
+   current at rest, and flipping `ZF_DEP_U2` alone — nothing else — took the
+   spinal cord from 21.5 Hz to exactly 0.0. Now 2e-6 (1.1% at rest, 2.4% under
+   flow). `DEP_U` 0.002 → 0.0003, for the reason below.
+3. **Calibrating with the plastic rules off while the live fish runs them on.**
+   `.env` has had `ZF_IP/ZF_DEP_U2/ZF_SENS/ZF_HEBB` on since 7d; `calibrate.py`
+   bisected without them. Every rule can only ever deliver *less* (d ≤ 1,
+   theta ≥ 0, Hebbian rows L1-conserved), so **calibrate at the most-depressed
+   configuration**: the flags-off case is merely louder, and `hot`/`runaway`
+   still catch that. `calibrate.py` now prints the live flags and respects
+   them; new scale **0.051397** (was 0.050141), bisected with all four on.
+
+### The headroom was the wrong way round
+
+This repo has said "about 8% of headroom above weight_scale" in three places
+since the beginning. **It is backwards.** This graph does not saturate; it
+dies quietly. Measured on 0.051397:
+
+- **0.7%** off the scale takes the resting spinal cord from 20 Hz to 2.
+- a **3%** cut in delivered sensory current takes it to **exactly 0.0**.
+- **0.011 mV** of mean theta — intrinsic plasticity's normal working range —
+  costs 40% of it.
+
+So the bound that matters on every plastic rule is how much current it can
+*remove*, and "> 0" is not a margin. `calibrate.py` gained `--floor` (default
+5 Hz) and reports a scale that only clears zero as the near miss it is.
+
+### The linear pool cannot have both, and motion wins
+
+Resizing `DEP_U` shallowed startle habituation (210 → 120 Hz became
+220 → 200), and the fix is an impossibility proof rather than a better `U`.
+A 0.4 s flash raises the sensory pops to ~55 Hz, costing the synapse ~22
+presynaptic spikes; **twenty seconds of merely being awake at 9 Hz costs 180.**
+Ten flashes ≈ 220. So no `U` buys deep train habituation without parking the
+resting brain at `d ≈ 0.5` — deep needs `U ≈ 0.005`, and
+`1/(1 + 9·0.005·20) = 0.51` is a brain with nothing behind the eyes.
+
+The choice is between an ornament and a sense, and it was measured, not argued:
+**at `U = 0.002` the fish is blind to motion** — 25 Hz of optic flow depresses
+`d` to 0.5, so nMLF and vSPN read 0.1 Hz whether the world moves or not, *on a
+graph re-bisected for that U*, so not a calibration artefact. At 0.0003 they go
+0.2 → 6.5 Hz. A fish that cannot see motion cannot swim, browse or play.
+
+### The startle assay asserted a broken brain's number
+
+`train[-1] < 0.6 * train[0]` was never a target anybody chose — it was a
+description of what the motion-blind brain happened to do. Swept the protocol
+to be sure nothing reasonable reaches it at the new `U`: 20 flashes → 0.89,
+1 s ISI → 0.91, doubled flash → 0.90, 3× brighter → 0.87. Replaced with the
+three things that are actually true of habituation and that fail together if
+the mechanism breaks: the response goes down (`< 0.95`), it keeps going down
+*after its peak*, and the synapse is measurably emptier afterwards
+(`d_after < d_before − 0.015`).
+
+**Not from the first flash — from the peak.** The first replacement asserted
+plain monotonicity and the plastic run broke it instantly with
+`220 → 230 → 220 → …`. That is not a fault: `ZF_SENS` restores the depleted
+resource on a startle, so an early flash can come back *stronger*.
+Sensitisation first, then habituation, is the textbook dual-process shape, and
+an assertion forbidding it would assert the absence of a rule this repo ships.
+
+### Two latent bugs in `calibrate.py`, both invisible until the flags went on
+
+- **`Probe.reset()` never reset `d2` or `theta`.** One Probe serves every
+  candidate, so each inherited the previous one's slow pool and threshold
+  creep — the bisection was scoring a monotonically more depressed brain as it
+  walked, converging on a number nothing could reproduce.
+- **The Hebbian L1 cache is built at `weight_scale = 1.0`.** `Probe` constructs
+  the sim at unit scale, so `h["l1"]` would have made the renormaliser "restore"
+  every retina row to ~20× the scale under test, on the first window, silently.
+  The invariant is proportional to the scale, so it now rescales per candidate.
+
+### A gate that could not fail, and a gate that failed for the right reason
+
+`spikes_per_sec > 0` cannot fail: zero is not a bar, and that counter is
+dominated by retina/DSGC, which fire from `set_drive` **current injection** —
+it would keep counting if every synapse in the graph were cut. That is why
+nothing caught this.
+
+The opposite mistake, caught in the same pass: the rally soak's new downstream
+gate failed with `silent: vspn` on a perfectly healthy brain. It read the
+*post-play settle*, which runs on whatever drive the last rally frame left —
+the ball was travelling straight down (dsgc up/down 18.8 Hz, left/right 0.58)
+and vSPN, the turn channel, correctly had nothing to say. **A population is
+silent when it stays quiet through a stimulus that should move it**, not when
+it is quiet in one still frame. Fixed by watching the play frames (6.4 Hz mean,
+non-zero on 34 of 40) rather than by weakening the gate.
+
+### Verified
+
+`smoke OK` **and** `smoke OK (plastic)`, both alive: flags-off
+`nmlf 0.22 vspn 0.29 spinal 62.41`; flags-on `nmlf 0.18 vspn 0.24 spinal 23.36`,
+`slow 0.0111`, `theta 0.018 mV`, per-row L1 conserved to 2.5e-07.
+`tools/warmstart_check.py` → **AGREE**. `tools/kernel_parity.py` → **exact** on
+`d`, `d2`, `theta`, `last_spike`, `weights` across all six flag combinations
+(v/isyn ~3e-16). `tools/rally.py --soak` → **soak OK, 8/8**, `in play, nmlf
+7.2 Hz vspn 6.3 Hz spinal 42.9 Hz`, mean |dy| 0.287.
+
+**Live, watched ~25 minutes after restart.** Came up at 46% firing; intrinsic
+plasticity converged it with decelerating increments — theta 1.197 → 1.722 mV,
+firing 46% → 29%. Settled: `retina 15.1, nmlf 21.6, vspn 21.5, mauthner 0.0,
+other 34.7, spinal 119.2`, `pages 51 clicks 147 scrolls 9 escapes 0`. **Scroll
+rate up ~90×** (9/51 against the broken fish's 1/485). Escapes still 0, which
+is correct: the M-cell is meant to be quiet between startles.
+
+`IP_MAX = 3.0 mV` is 43% of the 7 mV rest-to-threshold gap — larger than this
+graph's demonstrated sensitivity. It converged safely (plateau ~1.73 mV), so
+not a blocker, but it is bigger than it needs to be and deserves a look.
+
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
       gentle anti-founder-mode behavior.

@@ -32,6 +32,12 @@ import fishsim  # noqa: E402
 import pong  # noqa: E402
 import roam  # noqa: E402
 
+# the populations nothing drives directly, so their firing is evidence that the
+# graph is still connected rather than evidence that set_drive works. mauthner
+# is left out on purpose: a larva's M-cell is meant to be near-silent between
+# startles, so zero there is not a fault.
+DOWNSTREAM = ("nmlf", "vspn", "spinal", "other")
+
 
 def build(seed=7):
     """A Roamer with everything the rally path needs and nothing else. __init__
@@ -62,9 +68,22 @@ def build(seed=7):
     return r
 
 
-def play(r, rallies, thoughts):
-    """Returns a row per rally: mean |dy| and mean paddle-to-ball error."""
+def play(r, rallies, thoughts, watch=None):
+    """Returns a row per rally: mean |dy| and mean paddle-to-ball error.
+
+    `watch`, if given, is a list that collects the rates_hz of every frame the
+    brain runs during play — the only place the downstream populations can be
+    observed under the stimulus they were actually given."""
     roam.RALLY_THOUGHTS = thoughts
+    if watch is not None:
+        real_run = r.sim.run
+
+        def run_spy(*a, _real=real_run, **kw):
+            det = _real(*a, **kw)
+            watch.append(det["rates_hz"])
+            return det
+
+        r.sim.run = run_spy
     out = []
     for i in range(rallies):
         ok, tok, _ = r.table.join(f"10.0.0.{i}")
@@ -91,6 +110,8 @@ def play(r, rallies, thoughts):
                     float(np.mean(errs)) if errs else 0.0))
         print(f"    rally {i + 1:>2}: |dy| {out[-1][0]:.3f}   "
               f"paddle-ball {out[-1][1]:6.1f} px   score {r.table.score}")
+    if watch is not None:
+        r.sim.run = real_run
     return np.array(out)
 
 
@@ -209,22 +230,40 @@ def soak(rallies, thoughts):
       * both depression pools stayed <= 1. Bounded above by 1 is what makes them
         incapable of delivering more current than the calibrated weight - and it
         is the thing dishabituation could break, since it pushes d back up.
-      * nothing saturated and nothing went silent, measured, not assumed.
+      * nothing saturated, and the populations *nothing drives directly* are
+        still firing. That last one is the whole point and it used to be a
+        no-op: see the comment on the check itself.
     """
     fishsim.set_plasticity(ip=1, dep2=1, sens=1, hebb=1)
     r = build()
     print(f"  soak: {rallies} rallies x {thoughts} thoughts "
           f"= {rallies * thoughts} frames, all four rules on")
-    rows = play(r, rallies, thoughts)
+    frames = []
+    rows = play(r, rallies, thoughts, watch=frames)
     s = r.sim
     h = s._hebb
     assert h is not None, "the Hebbian rule never armed - nothing was soaked"
     mag = np.abs(s.weights[:h["hi"]])
     l1 = np.add.reduceat(mag, h["starts"])
     drift = float(np.abs(l1 / h["l1"] - 1.0).max())
-    detail = s.run(400)
+    # settle the depression pools before reading anything off them: d's time
+    # constant is 20 s and d2's is 600, so a rate measured right after play is
+    # a transient, not the state the fish lives in.
+    detail = s.settle_depression()
     hz = detail["rates_hz"]
     hottest = max(hz.items(), key=lambda kv: kv[1])
+    # Judge the downstream on the frames the fish actually played, not on this
+    # settled reading. The settle runs on whatever drive the last rally frame
+    # happened to leave, and the first version of this check duly failed with
+    # "silent: vspn" on a perfectly healthy brain: the ball was travelling
+    # straight down, so dsgc_up/down sat at 18.8 Hz and dsgc_left/right at
+    # 0.58, and vSPN - which is the turn channel - had nothing to say. It was
+    # right to say nothing. During play it averages 6.4 Hz and is non-zero on
+    # 34 frames in 40. A population is silent when it stays quiet through a
+    # stimulus that should move it, not when it is quiet in one still frame.
+    play_hz = {g: float(np.mean([f.get(g, 0.0) for f in frames])) for g in DOWNSTREAM} \
+        if frames else {}
+    dark = [g for g in DOWNSTREAM if play_hz.get(g, 0.0) <= 0.001]
     checks = [
         ("row L1 held", drift < 1e-3, f"worst row moved {drift:.2e} (gate 1e-3)"),
         ("theta one-sided", s.theta.min() >= 0.0 and s.theta.max() <= fishsim.IP_MAX,
@@ -235,7 +274,17 @@ def soak(rallies, thoughts):
          f"d2 [{s.d2.min():.4f}, {s.d2.max():.4f}]"),
         ("weights finite", bool(np.isfinite(s.weights).all()), "no NaN, no inf"),
         ("not saturated", hottest[1] < 350.0, f"hottest {hottest[0]} {hottest[1]:.0f} Hz"),
-        ("not silent", detail["spikes_per_sec"] > 0, f"{detail['spikes_per_sec']} spikes/s"),
+        # This used to read `spikes_per_sec > 0`, which could not fail for two
+        # independent reasons, and duly did not fail while the whole brain
+        # behind the eyes sat at exactly 0.0 Hz. First the threshold: zero is
+        # not a bar. Second, and worse, spikes_per_sec is dominated by the
+        # retina and the DSGC, which fire because set_drive injects current
+        # into them - they would keep counting if every synapse in the graph
+        # were cut. The only populations whose firing is evidence that the
+        # graph is connected are the ones nothing drives directly.
+        ("downstream alive", bool(frames) and not dark,
+         ("silent through the rally: " + ", ".join(dark)) if dark else
+         ("in play, " + " ".join(f"{g} {play_hz.get(g, 0.0):.1f} Hz" for g in DOWNSTREAM))),
         ("still plays", float(rows[:, 0].mean()) >= 0.08,
          f"mean |dy| {rows[:, 0].mean():.3f} (gate 0.08)"),
     ]

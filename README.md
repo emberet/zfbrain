@@ -119,16 +119,24 @@ directly.
   EM reconstruction (187,053 cells, 39 M synapses, 21 M with polarity) is the
   target; `fetch_cave.py` pulls it once access is granted, and the header will
   name it the day it is in.
-- **It runs hot.** A randomly wired graph this size has a narrow band between
-  silence and saturation — `calibrate.py` finds it (silent at a weight scale
-  of 0.030, saturated at 0.055), but real pages drive it near the top: about a
-  third of neurons fire in any 5 ms window and the fish startles more than it
-  swims. Structure is what keeps a real brain in band, and we do not have the
-  real structure yet.
-- The **only learning is habituation**: short-term synaptic depression on the
-  sensory inputs, the real larval kind. A held flash stops startling the
-  Mauthner cell; a page stared at for a minute drives the brain less. No
-  reward signal is invented.
+- **It runs hot, and the band is narrow enough to have bitten us.**
+  `calibrate.py` finds it — silent below a weight scale of ~0.027, and at the
+  0.051397 it uses, a 0.7% move takes the resting spinal cord from 2 Hz to 20.
+  In September 2026 every population behind the eyes read exactly 0.0 Hz for
+  days, because the calibration settled for 2.4 s against a 20 s synapse and
+  because the slow depression pool cut delivered sensory current by 3%. Fixed;
+  `calibrate.py` now settles to the analytic fixed point, calibrates with the
+  live plasticity flags on, and refuses a scale with no margin under it.
+  Structure is what keeps a real brain in band and we do not have it yet, so
+  intrinsic plasticity does the job instead: ~29% of neurons fire in any 5 ms
+  window once it settles, against ~46% without it.
+- The **learning is real and aimed at nothing**: synaptic depression on the
+  sensory inputs over ~20 s, a second pool behind it over ~10 min, a startle
+  that restores both, one-sided intrinsic plasticity, and L1-conserved Hebbian
+  change on the 6.8M synapses leaving the retina. All five default off in code
+  and on in `.env`. **No reward signal is invented** — it amplifies what it
+  already does, not what works, and `tools/rally.py --compare` measures that it
+  does not make the fish better at pong.
 - The **feed is live only while the fish is running** on one machine. Off, the
   page says asleep.
 - The **words are a narrator**, not the brain's language. Every post is
