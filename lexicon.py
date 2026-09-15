@@ -265,6 +265,13 @@ class Lexicon:
         self.spoke_from = 0       # the thought counting started at, so a file
                                   # from before the counter does not get a rate
                                   # averaged over thoughts nobody counted
+        # word -> times uttered. `live_words` next to it counts the *grown* half
+        # and reads 0 with the codebook frozen, which understates the fish in
+        # the one direction nobody would check: a visitor sees "0 words actually
+        # used" beside a transcript in which it plainly said `danger`. This is
+        # the hand-written half's own tally, and it is the honest answer to how
+        # much of the table the fish has ever reached for.
+        self.said_n = {}
         # start the clock now, not at the epoch: a 0.0 here means the very
         # first observe() tries to write the file, and every observe() after it
         # until one succeeds — which on a read-only path is a disk call per
@@ -396,6 +403,8 @@ class Lexicon:
         # not a rate. This is the only per-thought path.
         if said:
             self.spoke += 1
+            for w in said:
+                self.said_n[w] = self.said_n.get(w, 0) + 1
         return said
 
     def observe(self, vec):
@@ -521,6 +530,8 @@ class Lexicon:
                      slow=self.slow, seen=np.int64(self.seen),
                      splits=np.int64(self.splits), spoke=np.int64(self.spoke),
                      spoke_from=np.int64(self.spoke_from),
+                     said_w=np.array(list(self.said_n), dtype=object),
+                     said_c=np.array(list(self.said_n.values()), dtype=np.int64),
                      cell_word=np.array(self.cell_word, dtype=object),
                      version=np.int64(1))
             os.replace(tmp, self.path)
@@ -553,6 +564,9 @@ class Lexicon:
                 self.spoke_from = int(d["spoke_from"])
             else:
                 self.spoke, self.spoke_from = 0, self.seen
+            if "said_w" in d.files:
+                self.said_n = {str(w): int(c)
+                               for w, c in zip(d["said_w"], d["said_c"])}
             self.cell_word = [str(w) for w in d["cell_word"]]
         except (OSError, KeyError, ValueError, IndexError) as exc:
             print(f"lexicon load: {exc} — starting from one prototype")
@@ -579,6 +593,12 @@ class Lexicon:
             # category pages produced no word at all.
             "spoke": self.spoke,
             "spoke_of": max(0, self.seen - self.spoke_from),
+            # and which words, out of the 39 the table can still produce. The
+            # count is the interesting number and it is allowed to be small:
+            # over one life it has reached for three of them.
+            "vocab": len(self.said_n),
+            "said_top": [{"word": w, "n": c} for w, c in
+                         sorted(self.said_n.items(), key=lambda kv: -kv[1])[:8]],
             "word": self.last[1] if self.last else None,
             "anchors": list(self.last_anchors),
             "top": [{"word": self.cell_word[int(i)],

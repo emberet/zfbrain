@@ -961,6 +961,14 @@ its threshold. A separate fifteen-minute sample put it at **9 of 430**. It
 speaks at events (a page change with a startle in it, a greeting that lands),
 not continuously.
 
+The same look at the page found it understating itself in the direction nobody
+would check. `of those words actually used` read **0** — because it counts the
+*grown* half, which is frozen — while the transcript directly above it showed
+the fish saying `danger`. The row is now named for what it counts
+(`of those, ones it has used`), and the hand-written half got its own tally
+beside it: `words of ours it has ever said`, with the words and their counts.
+Over a life that number is a handful of the 39, and it is allowed to be.
+
 So the rate went on the page, next to the transcript, as
 `thoughts that produced a word`. A transcript with no rate beside it reads as
 though the fish is talking all the time, and that is a misreading the page was

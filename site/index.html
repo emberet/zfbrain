@@ -190,7 +190,7 @@
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 48px;margin-top:24px;border-top:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);">
       <sc-raw-table style="width:100%;border-collapse:collapse;font-size:14px;">
         <sc-raw-tbody>
-          <sc-for list="{{ wordsStats }}" as="w" hint-placeholder-count="11">
+          <sc-for list="{{ wordsStats }}" as="w" hint-placeholder-count="13">
             <sc-raw-tr>
               <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:var(--color-accent-200);vertical-align:top;">{{ w.name }}</sc-raw-td>
               <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);text-align:right;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:{{ w.size }};font-feature-settings:'tnum' 1;overflow-wrap:anywhere;">{{ w.value }}</sc-raw-td>
@@ -1005,7 +1005,11 @@ class Component extends DCLogic {
         ['of those, ones it can still say', lex ? n(lex.anchored) : dash],
         ['left for it to fill', lex ? n(lex.list - (lex.reserved != null ? lex.reserved : lex.anchored)) : dash],
         ['clusters it has split into', lex ? n(lex.cells) : dash],
-        ['of those words actually used', lex ? n(lex.live_words) : dash],
+        // Named for what it counts. This is the *grown* half, and with the
+        // codebook frozen it reads 0 — which, sitting under a transcript in
+        // which the fish plainly said something, was the page understating
+        // itself in the one direction nobody would think to check.
+        ['of those, ones it has used', lex ? n(lex.live_words) : dash],
         ['thoughts it has named', lex ? n(lex.thoughts) : dash],
         // Every threshold in the table is in standard deviations of this fish's
         // own range, so until there is an estimate of that range there is
@@ -1020,6 +1024,11 @@ class Component extends DCLogic {
         // thought in the file, so a map written before this counter existed
         // does not get a rate averaged over thoughts nobody counted.
         ['thoughts that produced a word', lex && lex.spoke_of ? n(lex.spoke) + ' of ' + n(lex.spoke_of) + ' · ' + (100 * lex.spoke / lex.spoke_of).toFixed(1) + '%' : dash],
+        // The hand-written half's own tally, which is the one the transcript is
+        // actually drawn from. Allowed to be very small, and it is: over a life
+        // it reaches for a handful of the 39.
+        ['words of ours it has ever said', lex && lex.vocab != null ? n(lex.vocab) + ' of ' + n(lex.anchored) : dash],
+        ['which ones', lex && (lex.said_top || []).length ? lex.said_top.map(s => s.word + ' ×' + n(s.n)).join(' · ') : dash],
         ['the map is still moving', lex ? (lex.learning ? 'yes' : 'no · frozen') : dash],
         ['the last word it reached for', lex && lex.word ? lex.word : dash],
       ].map(([name, value]) => ({ name, value, size: String(value).length > 8 ? '13px' : '20px' })),
