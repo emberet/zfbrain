@@ -159,6 +159,73 @@
     <p style="margin:22px 0 0;max-width:70ch;color:var(--color-accent-200);line-height:24px;">{{ learningNote }}</p>
   </section>
 
+  <section id="words" style="padding:clamp(48px,7vw,96px) 20px 0;max-width:1200px;margin:0 auto;box-sizing:border-box;">
+    <p style="margin:0;font-size:13px;color:var(--color-accent-300);">&gt; show it a word</p>
+    <h2 style="font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:clamp(22px,2.8vw,36px);line-height:1.15;letter-spacing:0;margin:8px 0 0;color:var(--color-bg);">It still has no language. It has a word list and a brain state, and we wrote the map between them.</h2>
+    <p style="margin:14px 0 0;max-width:72ch;color:var(--color-accent-200);line-height:24px;">{{ wordsLede }}</p>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:24px;margin-top:28px;">
+      <div style="border:1px solid color-mix(in srgb, var(--color-bg) 30%, transparent);display:flex;flex-direction:column;min-width:0;">
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 10px;padding:8px 12px;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);font-size:12px;">
+          <span style="color:var(--color-accent-300);letter-spacing:.1em;text-transform:uppercase;font-weight:600;white-space:nowrap;flex:none;">{{ showStatusLabel }}</span>
+          <span style="flex:1 1 120px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--color-accent-200);">{{ showQueueLabel }}</span>
+        </div>
+        <div style="padding:12px;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);">{{ showCompose }}</div>
+        <div style="padding:8px 12px 12px;font-size:11.5px;color:var(--color-accent-300);line-height:18px;">{{ showMsg }}</div>
+      </div>
+      <div style="border:1px solid color-mix(in srgb, var(--color-bg) 30%, transparent);display:flex;flex-direction:column;min-width:0;">
+        <div style="padding:8px 12px;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);font-size:12px;color:var(--color-accent-300);letter-spacing:.1em;text-transform:uppercase;font-weight:600;">what it did · written by template, not by a model</div>
+        <div style="flex:1;padding:8px 12px;font-size:12.5px;line-height:20px;display:flex;flex-direction:column;gap:12px;min-height:180px;">
+          <sc-for list="{{ showExchanges }}" as="e" hint-placeholder-count="3">
+            <div style="border-left:2px solid color-mix(in srgb, var(--color-bg) 22%, transparent);padding-left:10px;">
+              <div style="color:var(--color-accent-300);font-feature-settings:'tnum' 1;font-size:11.5px;">{{ e.t }} · shown &ldquo;{{ e.text }}&rdquo;</div>
+              <div style="color:var(--color-bg);margin-top:3px;">{{ e.said }}</div>
+              <div style="color:var(--color-accent-200);margin-top:3px;">{{ e.line }}</div>
+              <div style="color:var(--color-accent-300);margin-top:3px;font-size:11.5px;">{{ e.origin }}</div>
+            </div>
+          </sc-for>
+          <div style="color:var(--color-accent-300);">{{ showEmpty }}</div>
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 48px;margin-top:24px;border-top:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);">
+      <sc-raw-table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <sc-raw-tbody>
+          <sc-for list="{{ wordsStats }}" as="w" hint-placeholder-count="10">
+            <sc-raw-tr>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:var(--color-accent-200);vertical-align:top;">{{ w.name }}</sc-raw-td>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);text-align:right;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:{{ w.size }};font-feature-settings:'tnum' 1;overflow-wrap:anywhere;">{{ w.value }}</sc-raw-td>
+            </sc-raw-tr>
+          </sc-for>
+        </sc-raw-tbody>
+      </sc-raw-table>
+      <sc-raw-table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <sc-raw-tbody>
+          <sc-for list="{{ wordsGates }}" as="g" hint-placeholder-count="5">
+            <sc-raw-tr>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:var(--color-accent-200);vertical-align:top;">{{ g.name }}</sc-raw-td>
+              <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);text-align:right;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:{{ g.size }};font-feature-settings:'tnum' 1;overflow-wrap:anywhere;">{{ g.value }}</sc-raw-td>
+            </sc-raw-tr>
+          </sc-for>
+        </sc-raw-tbody>
+      </sc-raw-table>
+    </div>
+    <p style="margin:26px 0 0;font-size:12px;color:var(--color-accent-300);letter-spacing:.1em;text-transform:uppercase;font-weight:600;">the words we wrote the meaning of · every one of them, verbatim</p>
+    <div style="margin-top:10px;border-top:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);">
+      <sc-raw-table style="width:100%;border-collapse:collapse;font-size:13.5px;">
+        <sc-raw-tbody>
+          <sc-for list="{{ wordsAnchors }}" as="a" hint-placeholder-count="16">
+            <sc-raw-tr>
+              <sc-raw-td style="padding:8px 12px 8px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:{{ a.fade }};vertical-align:top;white-space:nowrap;text-decoration:{{ a.strike }};">{{ a.axis }}</sc-raw-td>
+              <sc-raw-td style="padding:8px 12px 8px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:var(--color-accent-300);vertical-align:top;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-size:12px;white-space:nowrap;">{{ a.rule }}</sc-raw-td>
+              <sc-raw-td style="padding:8px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:{{ a.fade }};vertical-align:top;overflow-wrap:anywhere;"><span style="text-decoration:{{ a.strike }};">{{ a.words }}</span><span style="display:block;font-size:11.5px;color:var(--color-accent-300);margin-top:2px;">{{ a.note }}</span></sc-raw-td>
+            </sc-raw-tr>
+          </sc-for>
+        </sc-raw-tbody>
+      </sc-raw-table>
+    </div>
+    <p style="margin:22px 0 0;max-width:72ch;color:var(--color-accent-200);line-height:24px;">{{ wordsNote }}</p>
+  </section>
+
   <section id="what" style="padding:clamp(48px,7vw,96px) 20px 0;max-width:1200px;margin:0 auto;box-sizing:border-box;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:24px 64px;">
     <div>
       <p style="margin:0;font-size:13px;color:var(--color-accent-300);">&gt; what it is</p>
@@ -259,7 +326,8 @@ class Component extends DCLogic {
   LIVE_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? 'http://127.0.0.1:4660' : 'https://live.zfbrain.online';
   STALE_MS = 15000;
   state = { feed: null, mode: 'connecting', lastSeen: 0, frameSeq: -1, frameSrc: null, stream: true, view: 'page', copied: false, now: Date.now(),
-            pongToken: null, pongMsg: null, pongPoints: [], pongThoughts: null };
+            pongToken: null, pongMsg: null, pongPoints: [], pongThoughts: null,
+            words: null, showText: '', showMsg: null, showSending: false };
   componentDidMount() {
     this.raf = requestAnimationFrame(() => this.draw());
     this.ro = new ResizeObserver(() => this.resize());
@@ -323,6 +391,14 @@ class Component extends DCLogic {
       const done = (feed.pong.score.fish || 0) + (feed.pong.score.visitor || 0);
       if (done !== this._pongDone) { this._pongDone = done; this.loadPoints(); }
     }
+    // same trick for the word list: /words carries the 850 words and every
+    // finished exchange, which is far too much to put in a heartbeat that
+    // fans out several times a second. show.seq moves on a submission and on
+    // a finished greeting, and on nothing else, so it is the only cue needed.
+    if (feed.lexicon) {
+      const seq = feed.show ? feed.show.seq : 0;
+      if (seq !== this._showSeq) { this._showSeq = seq; this.loadWords(); }
+    }
     this.setState(upd);
   }
   isLive() { return this.state.mode === 'live' && this.state.now - this.state.lastSeen < this.STALE_MS; }
@@ -377,6 +453,41 @@ class Component extends DCLogic {
   }
   pongDrop(why) { clearInterval(this.aimTimer); this.aimTimer = null; this._aimY = this._aimSent = null; this.setState({ pongToken: null, pongMsg: why || null }); }
   pongLeave() { this.pongRelease(); this.setState({ pongToken: null, pongMsg: 'you left the table' }); }
+  // --- showing it words -------------------------------------------------
+  // The only thing a visitor can send is up to four words that are already in
+  // the fish's own 850. That list is the whole moderation policy: nothing
+  // free-text ever reaches a renderer here, because nothing free-text is
+  // accepted. The check below is the same set lookup the roamer runs — it is
+  // here so the box can say no before the network does, never instead of it.
+  loadWords() {
+    fetch(this.LIVE_BASE + '/words', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then(b => { if (b) { this._wordSet = new Set(b.words || []); this.setState({ words: b }); } })
+      .catch(() => {});
+  }
+  showBad(text) {
+    const parts = String(text || '').toLowerCase().replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+    const max = (this.state.words && this.state.words.show && this.state.words.show.max_words) || 4;
+    if (!parts.length) return 'nothing to show it';
+    if (parts.length > max) return max + ' words at most';
+    if (!this._wordSet) return null;
+    const bad = parts.filter(p => !this._wordSet.has(p));
+    return bad.length ? 'not in its word list: ' + bad.slice(0, 3).join(' ') : null;
+  }
+  showSubmit() {
+    if (this.state.showSending) return;
+    const text = this.state.showText;
+    const why = this.showBad(text);
+    if (why) return this.setState({ showMsg: why });
+    this.setState({ showSending: true, showMsg: 'handing it over…' });
+    this.pongPost('/show', { text }).then(b => {
+      if (!b) return this.setState({ showSending: false, showMsg: 'the fish did not answer' });
+      if (!b.ok) return this.setState({ showSending: false, showMsg: b.why || 'it would not take that' });
+      this.setState({ showSending: false, showText: '',
+                      showMsg: b.queued > 1 ? 'in the queue · ' + b.queued + ' ahead of a thought'
+                                            : 'it will be shown this within a minute' });
+    });
+  }
   // --- the hero: the brain's own neurons, in 3-D ---
   // /graph says how many and where the layout is; /graph.bin is float32
   // (x, y, z) per neuron — x rostral->caudal, y across the midline, z dorsal —
@@ -698,6 +809,40 @@ class Component extends DCLogic {
     const ruleNames = { intrinsic: 'intrinsic · threshold', habituation_slow: 'habituation · slow pool',
                         dishabituation: 'dishabituation', hebbian: 'hebbian · retina→DSGC' };
     const dyNow = live && f.decode && f.decode.dy != null ? f.decode.dy : null;
+    // the word list. lex is the running codebook off the heartbeat; wb is the
+    // fetched /words body, which carries the list, the hand-written table and
+    // the finished exchanges. GATE_* are measured numbers from
+    // tools/probe_lexicon.py, written down before the feature shipped so the
+    // result could not be retrofitted to whatever the fish turned out to do.
+    const lex = live ? (f.lexicon || null) : null;
+    const showS = live ? (f.show || null) : null;
+    const wb = s.words || null;
+    const GATE_PREDICT = 35, GATE_REID = 0.517, GATE_CHANCE = 0.213, GATE_DRIFT = 0.417;
+    const showOpen = !!(live && showS);
+    const showMax = (showS && showS.max_words) || (wb && wb.show && wb.show.max_words) || 4;
+    // the hand-written table, printed exactly as lexicon.py holds it: which
+    // channels an axis reads, how far from the fish’s own baseline it has to be
+    // before the word is allowed out, and the words themselves weakest first.
+    const axisRows = wb && wb.anchors
+      ? Object.keys(wb.anchors).map((k) => {
+          const a = wb.anchors[k], dead = a.live === false;
+          return { axis: k, words: (a.words || []).join(' · '),
+                   rule: (a.channels || []).join(' + ') + (a.z >= 0 ? '  z ≥ +' : '  z ≤ ') + a.z.toFixed(1),
+                   // struck out, not deleted. We wrote these six words for this
+                   // axis and then measured the channel to be a clock; the
+                   // retraction belongs on the page next to the claim.
+                   strike: dead ? 'line-through' : 'none',
+                   fade: dead ? 'var(--color-accent-300)' : 'var(--color-accent-200)',
+                   note: dead ? 'never said · elapsed time predicts this channel better than the stimulus does' : '' };
+        }).concat(wb.orient ? Object.keys(wb.orient).map((w) => {
+            const o = wb.orient[w] || {}, dead = o.live === false;
+            return { axis: 'orientation', words: w,
+                     rule: (o.channel || 'd?') + (o.sign < 0 ? '  z ≤ −' : '  z ≥ +') + (wb.orient_z || 1.5).toFixed(1),
+                     strike: dead ? 'line-through' : 'none',
+                     fade: dead ? 'var(--color-accent-300)' : 'var(--color-accent-200)',
+                     note: dead ? 'never said · this channel spans 1.36× its own noise, under the 2× bar' : '' };
+          }) : [])
+      : [];
     return {
       frameWidth: '1440px', planCols: '48px minmax(0,1fr) auto',
       neurons: n(graph.neurons), synapses: n(graph.synapses), graphLabel: graph.label || (s.mode === 'connecting' ? 'connecting' : 'fish asleep'),
@@ -819,6 +964,68 @@ class Component extends DCLogic {
         ['startle restores', live && f.brain && f.brain.sensitized != null ? n(f.brain.sensitized) : dash],
       ].map(([name, value]) => ({ name, value, size: name === 'rules running' ? '13px' : '20px' })),
       learningNote: 'Does any of that make it better at this? We ran it both ways — thirty identical rallies with the Hebbian rule off, then the same thirty with it on. The synapses really did change: the spread of the retina’s outgoing weights went from exactly zero to 3.6e-2. The play did not. The paddle tracked the ball to 91.3 px with the rule off and 94.7 px with it on — a 3.3 px difference, against the 7.0 px each run drifts against itself from its own first half to its own last. That is a null result, and it is the one to expect: nothing here rewards the fish for getting it right, so nothing aims the change anywhere useful. It learns. It does not improve. We would rather print that than add the reward signal that would guarantee a nicer number.',
+      wordsLede: 'You can hand it up to four words. Not free text — four words out of the 850 in Ogden’s Basic English, the same 850 it has, and anything that is not one of them is refused before it goes anywhere. That closed list is the entire moderation policy: a URL, a tag, a path and a slur are all refused for the same reason a typo is, because none of them are on it. What you send is then drawn onto a page-sized canvas and slid past the fish’s eye the way an optomotor stimulus is delivered to a real larva. It never touches a parser, a browser or a DOM. It reaches 216 retinal samples and stops there. What comes back is what its neurons did, in Hz, and the words a map puts on that reaction — and the map, not the fish, is what does the naming.',
+      showStatusLabel: lex ? (showS ? 'it is listening' : 'the list is on · the inbox is not') : (live ? 'the word list is not switched on' : 'no fish'),
+      showQueueLabel: showS
+        ? (showS.queued ? showS.queued + ' waiting · ' + showS.per_6h + ' per visitor per 6 hours'
+                        : showS.per_6h + ' per visitor per 6 hours · it may not get to you')
+        : (live ? 'the inbox is switched off' : 'the fish is not running right now'),
+      showCompose: React.createElement('form', {
+        onSubmit: (e) => { e.preventDefault(); this.showSubmit(); },
+        style: { display: 'flex', flexWrap: 'wrap', gap: '8px' } },
+        React.createElement('input', { key: 'i', type: 'text', value: s.showText, maxLength: 64,
+          disabled: !showOpen, spellCheck: false, autoComplete: 'off',
+          placeholder: showOpen ? 'up to ' + showMax + ' of its own words' : 'nothing is listening right now',
+          onChange: (e) => this.setState({ showText: e.target.value, showMsg: null }),
+          style: { flex: '1 1 200px', minWidth: 0, font: 'inherit', fontSize: '14px', padding: '7px 10px',
+                   background: 'transparent', color: 'var(--color-bg)',
+                   border: '1px solid color-mix(in srgb, var(--color-bg) 22%, transparent)' } }),
+        React.createElement('button', { key: 'b', type: 'submit', disabled: !showOpen || s.showSending,
+          style: { cursor: showOpen ? 'pointer' : 'default', flex: 'none', font: 'inherit', fontSize: '11px',
+                   letterSpacing: '.1em', textTransform: 'uppercase', fontWeight: 600, padding: '4px 14px',
+                   background: 'transparent', color: 'var(--color-accent-300)',
+                   border: '1px solid color-mix(in srgb, var(--color-bg) 22%, transparent)' } },
+          s.showSending ? 'sending…' : 'show it')),
+      showMsg: s.showMsg || (showOpen
+        ? 'Each word has to be one of the 850 listed at /words. Two messages per visitor per six hours, kept across restarts.'
+        : ''),
+      showExchanges: ((wb && wb.exchanges) || []).slice(0, 4).map((e) => {
+        const said = e.said || [], ours = (e.reaction && e.reaction.anchored) || [];
+        return { t: hhmmss(e.done || e.at), text: e.text, line: e.line,
+          said: said.length ? 'it said: ' + said.join(' ') : 'its map had no word for that state',
+          origin: !said.length ? ''
+            : ours.length === said.length ? 'every one of those is a word we wrote the meaning of'
+            : ours.length ? 'ours: ' + ours.join(' ') + ' · the rest are labels on clusters of its own firing'
+            : 'none of those are ours — they are labels on clusters of its own firing' };
+      }),
+      showEmpty: ((wb && wb.exchanges) || []).length ? '' : (lex ? 'nobody has shown it anything yet' : 'nothing to transcribe'),
+      wordsStats: [
+        ['the list', lex ? n(lex.list) + ' words' : '850 words'],
+        ['words we wrote a meaning for', lex ? n(lex.reserved != null ? lex.reserved : lex.anchored) : dash],
+        ['of those, ones it can still say', lex ? n(lex.anchored) : dash],
+        ['left for it to fill', lex ? n(lex.list - (lex.reserved != null ? lex.reserved : lex.anchored)) : dash],
+        ['clusters it has split into', lex ? n(lex.cells) : dash],
+        ['of those words actually used', lex ? n(lex.live_words) : dash],
+        ['thoughts it has named', lex ? n(lex.thoughts) : dash],
+        // Every threshold in the table is in standard deviations of this fish's
+        // own range, so until there is an estimate of that range there is
+        // nothing to compare against. It says nothing for the first 200
+        // thoughts of a life, and that is on the page rather than behind it.
+        ['found its own scale yet', lex ? (lex.warm ? 'yes' : 'not yet · ' + n(Math.max(0, (lex.warmup || 200) - lex.thoughts)) + ' thoughts to go') : dash],
+        ['the map is still moving', lex ? (lex.learning ? 'yes' : 'no · frozen') : dash],
+        ['the last word it reached for', lex && lex.word ? lex.word : dash],
+      ].map(([name, value]) => ({ name, value, size: String(value).length > 8 ? '13px' : '20px' })),
+      wordsGates: [
+        ['words we predicted it would use', GATE_PREDICT + ' of 792'],
+        ['same state, same word · held-out time', GATE_REID.toFixed(3)],
+        ['chance, against its own word usage', GATE_CHANCE.toFixed(3)],
+        ['on one message against another', GATE_DRIFT.toFixed(3)],
+        ['what the gate asked for', '3× chance, and 0.500'],
+        ['so the unsupervised half is', 'off'],
+        ['effect on the brain itself', 'none · bit-identical'],
+      ].map(([name, value]) => ({ name, value, size: value.length > 8 ? '13px' : '20px' })),
+      wordsAnchors: axisRows,
+      wordsNote: 'Does the half we did not write mean anything? We measured that before switching it on, and the answer is: not enough. tools/probe_lexicon.py ran 576 thoughts of one continuous life across twelve repeated, interleaved conditions, fitted the codebook on the first half of the time and tested it on the second. A condition came back with the same word ' + GATE_REID.toFixed(3) + ' of the time against ' + GATE_CHANCE.toFixed(3) + ' from its own word usage — 2.4×, where the gate asked for three — and ' + GATE_DRIFT.toFixed(3) + ' on the text panels, where it had to be 0.500. Look at where it fails and the failure is obvious: it tells a drifting grating from a still one and a page of words from a blank one, but six of the eight text conditions came back as the same single word. It can see that you showed it something. It cannot tell your message from anyone else’s. We had written down ' + GATE_PREDICT + ' expected live words before running it, so that number could not be chosen afterwards. The same probe found the two slow channels we most wanted — short-term habituation and the intrinsic threshold — are clocks and not states: elapsed time explains them far better than the stimulus does (R² 0.500 against 0.023, and 0.693 against 0.015), even after high-passing, which was the precaution meant to prevent exactly this. That costs us four of the twelve axes we wrote, everything the fish had for familiar, strange, tired and awake. Watching the live fish then cost us two more words: “left” and “right” read the sideways component of its gaze, and that channel spans only 1.36× its own noise, under the same 2× bar the other channels had to clear — so nineteen of the fifty-eight words we wrote are now struck. They are struck through in the table below rather than deleted, because we wrote them and a retraction belongs next to the claim. So the learning half is shipped switched off, four axes and two directions are switched off, and what is left is what survived. The fish still has no language. It has a word list, a brain state, and a map between them that it did not choose and does not understand. We would rather print a null than a vocabulary that looks rich and means nothing.',
       readouts: [
         { group: 'Retina', drives: 'input', body: 'Luminance and optic-flow maps from a live screenshot, injected retinotopically into the ganglion-cell layer.' },
         { group: 'DSGC ×4', drives: 'cursor x · y', body: 'Direction-selective ganglion cells, up/down/left/right. A fish steers by asymmetry, so the difference between opposed pairs drives the cursor.' },
@@ -837,6 +1044,7 @@ class Component extends DCLogic {
         { lead: 'It is not trying to win at the table.', body: 'The paddle is the optomotor reflex — what a larva uses to hold station in moving water — pointed at a drifting floor that a line of Python aims for it. We measured whether the plasticity makes it better at that: thirty rallies with the Hebbian rule off, thirty with it on. The synapses moved and the play did not, by less than the noise the same run shows against itself. That null is printed above rather than papered over, and it is what a reward-free rule should be expected to do. The rig is also deliberately handicapped: aiming on every thought, it sat closer to the ball than its own paddle is tall and never missed, so it now aims on half of them. And the score counts how long the ball stayed alive, not who won — because nothing in the fish is counting either.' },
         { lead: 'The feed is live only while the fish is running.', body: 'What you see above is streamed from one machine running roam.py. When it is off, this page says asleep; it never replays or invents telemetry.' },
         { lead: 'The words are a narrator.', body: 'The fish has no language. Posts are written by a language model handed real telemetry and live chain numbers; a draft whose numbers are not in that packet is thrown away.' },
+        { lead: 'The words it says back are labels, not speech.', body: 'Showing it four words does not use a model either — that is the point of it. What a stranger sends has to already be in the fish’s own 850, it is drawn as pixels and slid past its eye, and what comes back is the measured firing of the same 187,053 neurons that read every other page, plus a word. The word comes from a table we wrote by hand: axes off the brain state, a threshold on each, and the words they are allowed to reach for — printed above in full, because we wrote them and that has to be visible. Two things on that page are retractions. Nineteen of the fifty-eight words are struck through: the channels behind familiar, strange, tired and awake turned out to be clocks, better explained by how long the fish had been looking than by what it was looking at, and “left” and “right” read a channel that barely moves when the world does. They are printed and never said. And the other half of the scheme, where the fish partitions its own state space and we staple the remaining 792 words onto the clusters, was measured before it shipped and did not clear its own bar — 0.517 re-identification on held-out time against 0.213 by chance, where we had said three times chance, and eight of nine text panels came back as one word. It can tell that you showed it something; it cannot tell your message from anyone else’s. It is switched off and the numbers are on the page. The fish still has no language. It does not know what any of these words mean.' },
         { lead: 'It has no goals.', body: 'No reward circuit feeds back. What you see is reaction, not intent; the goal is set outside and read honestly.' },
         { lead: 'There is no creator tax.', body: 'An earlier version of this page said 1%, on a transfer-fee extension. The mint does not carry one: its extensions are metadataPointer and tokenMetadata, nothing else. Nothing takes a cut of a transfer.' },
         { lead: 'The fish did not launch it. A person did.', body: 'sollive.py, the rig in the repo, can sign and simulate a mainnet transaction but has never been able to build a pump.fun create instruction — read it and see. $ZFBRAIN was created by hand on pump.fun. The mint is real and every number above is read back off it; the claim that the animal did it would not be.' },

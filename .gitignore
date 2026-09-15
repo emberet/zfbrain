@@ -6,7 +6,14 @@
 !.env.example
 
 # data & artifacts
-data/
+# data/* not data/, for the same reason build/* is written that way: git does
+# not descend into an excluded directory, so a negation could not reach inside.
+data/*
+# ...except the word list, which is source and not an artifact. `lexicon.py`
+# refuses to load without it, and it is the whole moderation policy for
+# `POST /show` — a stranger's message is checked by membership in this file and
+# by nothing else, so a clone without it has no list to check against.
+!data/basic_english.txt
 # build/* not build/, or the negation below cannot reach inside it: git does
 # not descend into an excluded directory
 build/*

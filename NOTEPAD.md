@@ -739,6 +739,190 @@ is correct: the M-cell is meant to be quiet between startles.
 graph's demonstrated sensitivity. It converged safely (plateau ~1.73 mV), so
 not a blocker, but it is bigger than it needs to be and deserves a look.
 
+## 7g · Words, and the two halves of the claim (2026-09-15)
+
+Asked for: a list of the ~1000 most-used words, the fish expressing itself
+through them, and simple exchanges with strangers at 2 texts per 6 h.
+
+Shipped: `data/basic_english.txt` (Ogden's 850 core), `lexicon.py`, `show.py`,
+`GET /words`, `POST /show`, a `#words` section. **No model on any path.** That
+matters because this feature already existed once — `talk.py` at `050b7d1`,
+reverted by `3de4ee7` the same day, for exactly one recorded reason: one
+Anthropic call per stranger greeting, ceiling ~4,300/day. `show.py` is that file
+with the narrator cut out; `line()` is a template. The flag is `ZF_SHOW`, **not**
+`ZF_TALK`, because that name carries the bill.
+
+### The closed list is the moderation policy
+
+Strangers compose from the same 850 the fish has, so `sanitise()` is a set
+lookup, not a regex over free text. `<script>alert(1)</script>` and
+`http://evil.com` are refused for the same reason a typo is — they are not in
+Ogden. Then the words are *drawn* onto a canvas and slid past the retina. There
+is no parser anywhere on the path, so there is nothing to inject into. The
+budget is 2 per visitor per 6 h, persisted to `.state/show_budget.json` because a
+budget that lives only in memory is one a restart refills.
+
+### 850, not 1000
+
+Ogden's documented route to a thousand is 850 core + a 100-word general-field
+list + a 50-word specialised list, and the supplementary lists are not
+reproducible against one canonical source — the "combined" list in circulation
+runs to 2,626 words across five provenances. Padding to a round number with
+words we could not attribute would cost the only thing the file is for. The page
+says 850. A raw top-1000-by-frequency list would also have handed a public feed
+war/kill/die/hate; Ogden's was curated in 1930 so simple things could be said
+with it, which is the same requirement, safe by construction.
+
+### Gate 0d: 0.517 against 0.213, and the failure is legible
+
+`tools/probe_lexicon.py`, 576 thoughts of **one continuous life** across twelve
+interleaved conditions with all four slow rules on. Fit the codebook on the
+first half of the time, test on the second:
+
+    re-identification   0.517   (marginal chance 0.213, 2.4x — gate wanted 3x)
+    on the text panels   0.417   (gate wanted 0.500)
+    0c prediction, recorded first: ~35 live words of a possible 792
+
+**FAIL, and look at where.** It separates a drifting grating from a still one and
+a page of words from a blank page. Six of the eight text conditions came back as
+the same single word, `swim`. It can tell that you showed it *something*; it
+cannot tell your message from anyone else's — which is precisely the thing this
+feature needed. So the grown half ships switched off (`ZF_LEXICON_LEARN=0`) and
+the numbers are on the site. That is a result, not a failure to hide.
+
+### 0e cost us four axes we had already written
+
+`habituation` and `intrinsic` entered high-passed specifically so they could not
+become a clock. They became one anyway:
+
+    hab_hp     R2(time) 0.500   R2(cond) 0.023   0b span ratio 0.16
+    theta_hp   R2(time) 0.693   R2(cond) 0.015   0b span ratio 0.13
+
+Elapsed time explains `theta_hp` **forty times** better than the stimulus does.
+Both gates condemn them independently, so `CLOCK_CHANNELS` bars any word from
+coming out of them: `familiar±` and `fatigue±` — 17 words, everything the fish
+had for familiar, strange, tired, awake. Anchors drop 58 → 41 live. They stay in
+`ANCHORS`, stay in `FEATURES` (the published numbers have to describe the thing
+that was measured), stay **reserved** from the codebook, and are printed struck
+through on the page. A retraction belongs next to the claim.
+
+Two more words went the same way after the fish was watched running: see below.
+Live anchors 58 → 41 → **39**.
+
+### Five bugs the gates caught, all before shipping
+
+- **`np.savez` appends `.npz`.** `path.with_suffix(".npz.tmp")` wrote
+  `…npz.tmp.npz`, so `os.replace` hit ENOENT on *every* save. Silent except for
+  probe stderr.
+- **`_saved_at = 0.0` at init** made `maybe_save()` fire on the first `observe()`
+  and every one after until a save succeeded — a disk call per thought. That,
+  not the maths, is what blew 0f's budget (0.697 ms → 0.201 ms).
+- **`quantise()` advanced the running statistics** by calling `encode()`, so a
+  thought that both spoke and learned was counted twice.
+- **0d was a gate that could not fail.** 36 fit thoughts against `SPLIT_N=400`
+  left the codebook at one cell, every condition mapped to one word, and
+  re-identification scored a meaningless 1.000. Fixed three ways: scale
+  `SPLIT_N` to the probe's data volume and print both numbers, hard-fail under
+  two cells, and score against the **word marginal** rather than
+  `1/n_conditions`.
+- **0d then tested a strawman.** It chose channels and quantised on all twelve
+  anyway, so half the Euclidean distance was the noise 0b had just condemned.
+  Selecting on the **fit half alone** (reusing 0b's pick would score the
+  codebook against its own answer key) moved re-identification 0.271 → 0.556 and
+  the text panels 0.167 → 0.438. **It still failed — but it now failed for the
+  right reason**, and the earlier number would have understated the thing by
+  more than a factor of two. (Those two figures are from the run before the
+  warm-up fix below; the shipped numbers are 0.517 and 0.417, re-measured
+  against the code that actually ships.)
+
+One more found by reading rather than measuring: **`0c`'s "prediction" was a
+clamp.** `min(product, 792)` printed exactly the ceiling. It prints the raw
+product now and says plainly when it bounds nothing.
+
+### Three more the gates could not catch, because only the live fish had them
+
+The gates all ran on the probe, which drives `observe()` directly with learning
+on. The live fish runs `ZF_LEXICON_LEARN=0` through `roam.py`. Every one of these
+is on the path the probe never took, and each looked exactly like a design result
+until it was measured.
+
+- **The normaliser never ran with learning off.** `encode()` — which advances
+  `slow`/`mean`/`var`/`seen` — was reachable only through `observe()`, and
+  `roam._quantise()` called `observe()` only `if self.lex.learn`. So `seen`
+  stayed 0, mean/var stayed 0/1, and every threshold in the table was compared
+  against a scale the brain never occupies. **Symptom: the live fish said
+  `current`, and only `current`, on every thought of a whole life**, with
+  `lexicon.thoughts` frozen at 0. The z-score is not learning — it is the unit
+  the hand-written thresholds are *stated in*. Fixed by `Lexicon.think()`, now
+  the single entry point, with exactly one `encode()` per thought either way.
+
+- **Then it said nothing at all — for 338 consecutive thoughts.** The mirror
+  image, and the more instructive one. `self.var` started at `1.0` and decayed at
+  `1/NORM_TAU` a thought, so after n thoughts it still carried `0.999**n` of that
+  prior. Sampling 58 consecutive thoughts off the live feed and pushing them back
+  through `features()`:
+
+      mauthner sd 0.24   spikes 0.23   membrane 0.17   spinal 0.16   dx 0.002
+      variance estimate, every channel: 0.945  ( = 0.999**58 )
+
+  Every real channel here has a standard deviation far below one, so every z was
+  divided by ~1.0 instead of by ~0.2. Largest |z| in the whole run: **0.675,
+  against a 1.5 threshold.** Nothing could ever fire. The prior would have taken
+  ~2,900 thoughts to decay far enough for `mauthner` and ~12,000 for `dx` —
+  channels coming online one at a time over hours — and with the codebook frozen
+  none of it was persisted, so every restart began the wait again. Fixed with an
+  exact sample mean/variance (Welford's `d_old * d_new`) at rate `1/seen` until
+  the window fills, then the EMA; estimates now match the true sd to four
+  decimals on all ten live channels. `WARMUP = 200` thoughts of deliberate
+  silence while the scale is found, said on the page rather than hidden, and the
+  normaliser is now persisted **regardless of the learn flag** — it is not the
+  codebook, and a scale thrown away at every restart gives the same brain state a
+  different word either side of a crash. On the replayed live data the fish then
+  spoke on 19% of thoughts across eight words and six axes.
+
+- **`left` and `right` were unreachable, not rare.** Orientation was the one axis
+  not stated in z: `ORIENT_T = 0.3` on `decode()`'s raw −1..1. Measured live, `dy`
+  has a standard deviation of **0.003** — the threshold was a hundred sigma out,
+  so no page could ever produce a direction word. Orientation now reads the same
+  z as every other axis. `dx` is struck outright, on the same 0b evidence that
+  condemned the clocks: span 1.36× its own noise, under the 2× bar. Struck words
+  58 → 19, live anchors 41 → 39.
+
+**What the three have in common:** the probe validated the map and never
+exercised the wiring the live fish actually uses. A gate that cannot see the
+production path is not a gate on the production path.
+
+### Two design traps, avoided by construction
+
+**A fixed 850-prototype codebook would have produced a lie, not a null.**
+Lloyd-style VQ allocates codewords as density^(d/(d+2)); with one dominant blob —
+a static text page — nearly all of them pack *inside* it and split below the
+noise floor. Every word gets used, the histogram looks rich, and "same state →
+same word" fails silently. **Dead vocabulary is honest; live-but-random
+vocabulary falsifies the headline claim while looking like success.** Hence a
+grown codebook off a measured floor. MacQueen rates `1/n_i`, not fixed η, or
+"the partition changes over days" is true by construction. *Rejected:* DeSieno
+conscience CL (manufactures uniform word usage), Kohonen SOM (imposes a 2-D
+neighbourhood the data does not have).
+
+### Verified
+
+`smoke OK` and `smoke OK (plastic)` unchanged; `weight_scale` still `0.051397`.
+**0f: `rates_hz` bit-identical with the lexicon on and off**, and
+`features()+observe()+utter()` mean 0.129 ms / worst 0.191 ms against a ~1 s
+thought. Endpoints, offline: `/words` and `POST /show` both 404 without the
+flags and `/state` carries no `lexicon` key. On: 3 KB body refused **unread**
+(413, the `Content-Length` check is before the read), script tag and URL refused
+400, five words refused 400, third message from one IP inside 6 h refused 429
+with the minutes left, preflight advertises `POST`. Budget survives a simulated
+restart. Codebook round-trips through save/load exactly; frozen `quantise()`
+does not advance `seen`; no struck word is ever uttered across 3,000 synthetic
+thoughts.
+
+**Still open:** whether 0d would pass on a day of real browsing rather than
+twelve probe conditions. The site reports whatever it shows, including "it uses
+11 of the 850".
+
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
       gentle anti-founder-mode behavior.

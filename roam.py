@@ -17,6 +17,8 @@ Everything the fish just did is published, in-process, on 127.0.0.1:4660:
     GET /graph.bin  every neuron's position (3-D) + population, binary
     GET /firing.bin?seq=N  which neurons fired in the last 5 ms, one bit each
     GET /healthz    200 while the process is up
+    GET /words      the 850-word list, the anchor table, the codebook (ZF_LEXICON=1)
+    POST /show      show it up to four of those words (ZF_SHOW=1; see show.py)
 
 bin/tunnel.sh puts that behind https://live.zfbrain.online; the site
 subscribes to it and shows the honest "asleep" state when nothing answers.
@@ -167,6 +169,17 @@ RALLY_SUBSTEPS = 16
 # but only while a visitor is holding the seat, which is not the steady state.
 RALLY_FPS = float(os.environ.get("ZF_PONG_FPS", "15"))
 POST_MAX = 2048                   # bytes; checked before the body is read
+
+# being shown words (ZF_SHOW=1). Same shape as a rally: a greeting replaces a
+# page thought rather than adding one, and show.py's inbox gap bounds the rate,
+# so browsing stays what the fish does with its life.
+GREET_THOUGHTS = int(os.environ.get("ZF_SHOW_THOUGHTS", "10"))
+# The canvas is drawn this much taller than the viewport and the viewport slides
+# down it, which is how an optomotor stimulus reaches a real larva. A still
+# panel makes no optic flow after the first frame, and a fish with no flow has
+# nothing to say — measured in tools/probe_lexicon.py, where the still-text
+# conditions separate from the drifting ones on every surviving channel.
+GREET_DRIFT = int(os.environ.get("ZF_SHOW_DRIFT", "600"))
 
 
 def _env_flag(name):
@@ -329,6 +342,41 @@ class Roamer:
             except ValueError:
                 aim = pongmod.AIM_DUTY
             self.table = pongmod.Table(rig=not _env_flag("ZF_PONG_NORIG"), aim=aim)
+
+        # the word map and the stranger channel, both off in code. Two separate
+        # flags on purpose: the map can run and be measured with no public
+        # endpoint open at all, and ZF_LEXICON_LEARN can be dropped to freeze
+        # the codebook, which is how a stability claim gets made.
+        # Deliberately NOT named ZF_TALK — that flag carried a narrator and an
+        # Anthropic call per greeting, and this feature has neither.
+        self.lex = None
+        self.show = None
+        if _env_flag("ZF_LEXICON"):
+            import lexicon as lexmod
+            self.lexmod = lexmod
+            try:
+                self.lex = lexmod.Lexicon(
+                    path=os.path.join(state_dir, "lexicon.npz"),
+                    learn=_env_flag("ZF_LEXICON_LEARN"))
+                print(f"lexicon: {self.lex.state()['cells']} cells, "
+                      f"{len(self.lex.words)} words, "
+                      f"learning {'on' if self.lex.learn else 'off (frozen)'}")
+            except (OSError, ValueError) as exc:
+                # a bad word list is a reason not to have the feature, not a
+                # reason to take the fish down
+                print(f"lexicon: off ({exc})", file=sys.stderr)
+        if self.lex is not None and _env_flag("ZF_SHOW"):
+            import show as showmod
+            self.showmod = showmod
+            try:
+                per = int(os.environ.get("ZF_SHOW_PER_6H", showmod.PER_WINDOW))
+            except ValueError:
+                per = showmod.PER_WINDOW
+            self.show = showmod.Show(
+                self.lex.words, per_window=per,
+                budget_path=os.path.join(state_dir, "show_budget.json"))
+            print(f"show: POST /show is open · {per} per visitor per 6 h · "
+                  f"{showmod.MAX_WORDS} words from a list of {len(self.lex.words)}")
         self.graph_doc = self._graph_doc()
         threading.Thread(target=self._chain_loop, daemon=True).start()
 
@@ -683,6 +731,48 @@ class Roamer:
         except Exception:  # noqa: BLE001 — a dropped frame must not end a life
             self._cam_at = time.time()
 
+    # ---- what every thought does with its own numbers -------------------
+    def _settle(self, detail):
+        """Fold this thought's rates into the running resting baselines, then
+        decode against them. A bout is a rise above the fish's own recent
+        average, not above a constant, which is why this has to happen on every
+        thought and in exactly one place — it used to be copy-pasted at the two
+        decode() call sites, and the copies covered three populations while
+        `rest` is consulted for more than three.
+
+        Now it runs over all of fishsim.NEED, because lexicon.features() spans
+        retina and spinal too and a span taken against a missing baseline
+        silently becomes a span against zero."""
+        for g in fishsim.NEED:          # slow baselines (~8 s)
+            hz = detail["rates_hz"].get(g, 0.0)
+            self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
+        return self.sim.decode(detail["rates_hz"], rest=self._rest)
+
+    def _quantise(self, detail, dec):
+        """Put a word on this thought. Read-only on everything the brain owns:
+        it takes numbers that were already published and looks them up in a
+        matrix that lives outside the connectome. Probe 0f holds this to
+        bit-identical rates_hz with the lexicon on and off.
+
+        Never allowed to take the fish down — a word is the least important
+        thing happening in this loop."""
+        if self.lex is None:
+            return None
+        try:
+            # One call, because the running z-score has to advance exactly once
+            # a thought and has to advance whether or not the codebook is
+            # learning — the thresholds in the anchor table are stated in that
+            # z-score, and against a frozen mean 0 / var 1 they are being
+            # compared to a range this brain never occupies. Gating it on the
+            # learn flag made the live fish say `current`, and only `current`,
+            # on every thought of a whole life.
+            vec = self.lexmod.features(detail, dec, self._rest)
+            return self.lex.think(vec, dec)
+        except Exception as exc:  # noqa: BLE001
+            print(f"lexicon: {exc}", file=sys.stderr)
+            self.lex = None       # stop trying; the heartbeat drops the field
+            return None
+
     def step(self, page, hops_left):
         # what the fish sees: the frame the retina samples is also a camera frame
         self._cam_page = page
@@ -694,11 +784,9 @@ class Roamer:
             self.sim.set_drive(self.groups.get(group, []), hz)
         # the brain thinks in slices so the camera can keep rolling in between
         detail = self.sim.run(SIM_STEPS, tick=self._camera_tick, tick_every=CAM_SLICE)
-        for g in ("nmlf", "vspn", "mauthner"):  # slow baselines (~8 s); a burst rides above them
-            hz = detail["rates_hz"].get(g, 0.0)
-            self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
-        dec = self.sim.decode(detail["rates_hz"], rest=self._rest)
+        dec = self._settle(detail)
         self.stats["brain_steps"] += SIM_STEPS
+        self._quantise(detail, dec)
         self._note_page(page)
 
         # steering -> a heading the cursor swims along until the next thought,
@@ -758,6 +846,88 @@ class Roamer:
 
         self._publish(detail, dec, out, img)
         return detail, hops_left
+
+    # ---- being shown something -----------------------------------------
+    def _show(self, msg):
+        """Show the fish a stranger's words and measure what its neurons do.
+
+        Deliberately `step()` with every page interaction removed: same retina,
+        same set_drive, same 400 LIF steps, same decode — but no screenshot, no
+        cursor, no scroll, no click, no navigation. The words are a drawn canvas
+        that slides past the viewport, which is how an optomotor stimulus is
+        delivered to a real larva, and the only thing they touch is the retina.
+        A visitor's string never reaches a parser, a URL or a DOM; it reaches
+        216 retinal samples.
+
+        What comes back is two things, and the page keeps them apart: the
+        reaction, in Hz, which is the fish's actual answer, and the words
+        lexicon.py's map puts on that reaction. The second is a label on the
+        first. It is still not language and this does not give it any."""
+        canvas = self.showmod.render(msg["text"], pad=GREET_DRIFT)
+        peak, mean, dec, detail = {}, [], None, None
+        said = []
+        bout = turn = escape = False
+        saved, self._cam_page = self._cam_page, None   # the camera holds here
+        self._event("show", f"shown: \u201c{msg['text'][:44]}\u201d")
+        try:
+            for i in range(GREET_THOUGHTS):
+                view = self._show_crop(canvas, i / GREET_THOUGHTS)
+                self._publish_frame(view)
+                out = self.retina.step(np.asarray(view))
+                for group, hz in self.retina.rates(out, motion_gain=1.5).items():
+                    self.sim.set_drive(self.groups.get(group, []), hz)
+
+                def tick(_i=i):
+                    # keep the live panel at camera rate while the words drift,
+                    # so viewers see a moving stimulus and not one still a second
+                    if time.time() - self._cam_at < 1.0 / max(1.0, CAM_FPS):
+                        return
+                    frac = min(1.0, (_i + 0.5) / GREET_THOUGHTS)
+                    self._publish_frame(self._show_crop(canvas, frac))
+
+                detail = self.sim.run(SIM_STEPS, tick=tick, tick_every=CAM_SLICE)
+                dec = self._settle(detail)
+                self.stats["brain_steps"] += SIM_STEPS
+                words = self._quantise(detail, dec)
+                for w in words or ():
+                    if w not in said:
+                        said.append(w)
+                for g, hz in detail["rates_hz"].items():
+                    peak[g] = max(peak.get(g, 0.0), float(hz))
+                mean.append(detail["spikes_per_sec"] / self.sim.n)
+                bout = bout or dec["scroll"] > 0.3
+                turn = turn or dec["turn"] > 0.5
+                escape = escape or bool(dec["escape"])
+                self._publish(detail, dec, out, None)
+        finally:
+            self._cam_page = saved
+        reaction = {
+            "peak": {g: round(v, 1) for g, v in peak.items()},
+            "bout": bout, "turn": turn, "escape": escape,
+            "mean_hz": round(sum(mean) / max(1, len(mean)), 1),
+            "thoughts": GREET_THOUGHTS,
+            "habituation": round(float(detail["habituation"]), 3),
+            "dx": round(dec["dx"], 3), "dy": round(dec["dy"], 3),
+            # what it said, and which of those words we wrote the meaning of.
+            # Capped at the same count the stranger gets: the reply is not
+            # allowed to be a transcript of ten thoughts' worth of clusters.
+            "said": said[:self.showmod.MAX_WORDS],
+            "anchored": [w for w in said[:self.showmod.MAX_WORDS]
+                         if w in set(self.lexmod.anchored_words())],
+        }
+        entry = self.show.finish(msg, reaction)
+        self._event("show", entry["line"][:96])
+        # one more heartbeat, carrying the bumped show seq and the two events:
+        # the page only refetches /show when that seq moves, and without this it
+        # would not move until the fish's next thought about a page
+        self._publish(*self._last)
+        return reaction
+
+    def _show_crop(self, canvas, frac):
+        """The viewport-sized window into the drifting canvas at `frac` of the
+        way through the greeting."""
+        top = int(max(0.0, min(1.0, frac)) * GREET_DRIFT)
+        return canvas.crop((0, top, VIEW_W, top + VIEW_H))
 
     # ---- the table -----------------------------------------------------
     def _rally(self):
@@ -837,11 +1007,9 @@ class Roamer:
                 # a sixteenth of its speed every thought
                 if spent[0] < 1.0:
                     events.append(table.advance(1.0 - spent[0]))
-                for g in ("nmlf", "vspn", "mauthner"):
-                    hz = detail["rates_hz"].get(g, 0.0)
-                    self._rest[g] = hz if g not in self._rest else 0.95 * self._rest[g] + 0.05 * hz
-                dec = self.sim.decode(detail["rates_hz"], rest=self._rest)
+                dec = self._settle(detail)
                 self.stats["brain_steps"] += SIM_STEPS
+                self._quantise(detail, dec)
                 table.move_fish(dec["dy"])
                 played += 1
                 # any sub-step could have returned the ball or ended the point,
@@ -897,6 +1065,13 @@ class Roamer:
             # every SSE client several times a second; the page refetches /pong
             # for the finished points only when `seq` moves.
             state["pong"] = self.table.state()
+        if self.lex is not None:
+            # counts and the last word, never the codebook itself. The page
+            # shows how much of the list is in use, which is the number that
+            # can embarrass us, so it is the one that goes out.
+            state["lexicon"] = self.lex.state()
+        if self.show is not None:
+            state["show"] = self.show.state()
         # which of the four slow rules are actually switched on. The site may
         # only claim a mechanism that is running, so this comes from the module
         # that owns the flags rather than from anything the page hard-codes.
@@ -993,6 +1168,15 @@ class Roamer:
                         # table is not somewhere it went.
                         if self.table is not None and self.table.occupied():
                             self._rally()
+                        # same rule, same reason: a greeting replaces what the
+                        # retina is looking at, so it lands between hops and
+                        # costs no hop. show.next_message() returns None until
+                        # the inbox gap has passed, which is what keeps this
+                        # from becoming the fish's whole life.
+                        if self.show is not None:
+                            msg = self.show.next_message()
+                            if msg is not None:
+                                self._show(msg)
                         host = urlsplit(page.url).netloc.lower()
                         why = blocked_url(page.url)
                         if not host:  # about:blank and friends — nothing to see
@@ -1077,7 +1261,8 @@ def make_handler(roamer):
 
         def do_OPTIONS(self):
             self.send_response(204)
-            methods = "GET, POST, OPTIONS" if roamer.table is not None else "GET, OPTIONS"
+            posts = roamer.table is not None or roamer.show is not None
+            methods = "GET, POST, OPTIONS" if posts else "GET, OPTIONS"
             self.send_header("Access-Control-Allow-Methods", methods)
             self.send_header("Access-Control-Allow-Headers", "Cache-Control, Content-Type")
             self.send_header("Access-Control-Max-Age", "86400")
@@ -1131,6 +1316,40 @@ def make_handler(roamer):
                 body = {"state": roamer.table.state(), "points": roamer.table.ring(),
                         "thoughts": RALLY_THOUGHTS}
                 self._send(200, json.dumps(body).encode(), "application/json")
+            elif path == "/words":
+                # the whole contract in one response: the list a stranger has to
+                # compose from, the table we hand-wrote, and where the codebook
+                # has got to. The word list is what makes the input safe, so it
+                # has to be fetchable — a client cannot obey a list it cannot see.
+                if roamer.lex is None:
+                    self._send(404, b"no lexicon", "text/plain")
+                    return
+                lexmod = roamer.lexmod
+                body = {
+                    "words": roamer.lex.words,
+                    # `live` is false for an axis gate 0e struck out: it is
+                    # still printed, because we wrote it and hiding a retracted
+                    # claim is worse than showing it, and it never speaks.
+                    "anchors": {axis: {"channels": list(ch), "z": t,
+                                       "words": list(ws),
+                                       "live": lexmod.axis_live(axis)}
+                                for axis, (ch, t, ws) in lexmod.ANCHORS.items()},
+                    "clock_channels": list(lexmod.CLOCK_CHANNELS),
+                    # orientation carries its own liveness the same way: `left`
+                    # and `right` read dx, which gate 0b measured at 1.36x its
+                    # own noise against a 2x bar, so they are printed and never
+                    # said. The threshold is in z, like every other axis.
+                    "orient": {w: {"channel": c, "sign": s,
+                                   "live": w not in lexmod.DEAD_ORIENT}
+                               for w, (c, s) in lexmod.ORIENT.items()},
+                    "orient_z": lexmod.ORIENT_T,
+                    "features": list(lexmod.FEATURES),
+                    "state": roamer.lex.state(),
+                    "show": roamer.show.state() if roamer.show else None,
+                    "exchanges": roamer.show.ring() if roamer.show else [],
+                    "thoughts": GREET_THOUGHTS,
+                }
+                self._send(200, json.dumps(body).encode(), "application/json")
             else:
                 self._send(404, b"not found", "text/plain")
 
@@ -1159,7 +1378,13 @@ def make_handler(roamer):
         def do_POST(self):
             path = self.path.split("?", 1)[0]
             table = roamer.table
-            if table is None or path not in ("/pong/join", "/pong/move", "/pong/leave"):
+            show = roamer.show
+            known = ("/pong/join", "/pong/move", "/pong/leave")
+            if path == "/show":
+                if show is None:
+                    self._send(404, b"not found", "text/plain")
+                    return
+            elif table is None or path not in known:
                 self._send(404, b"not found", "text/plain")
                 return
             obj, err = self._read_json()
@@ -1167,6 +1392,19 @@ def make_handler(roamer):
                 self._send(413 if "too big" in err else 400,
                            json.dumps({"ok": False, "why": err}).encode(),
                            "application/json")
+                return
+            if path == "/show":
+                # The text is never trusted and never has to be: show.sanitise
+                # takes it apart into words and refuses anything that is not
+                # already one of the 850. Nothing that survives can be a URL,
+                # a tag, a path or a slur, because none of those are in the
+                # list, and the survivors are drawn as pixels rather than
+                # rendered as markup.
+                ok, detail, code = show.submit(obj.get("text"),
+                                               self.client_address[0])
+                body = ({"ok": True, "queued": detail, "seq": show.state()["seq"]}
+                        if ok else {"ok": False, "why": detail})
+                self._send(code, json.dumps(body).encode(), "application/json")
                 return
             if path == "/pong/join":
                 ok, detail, code = table.join(self.client_address[0])
@@ -1270,6 +1508,10 @@ def serve(roamer):
     paths = "/state /frame.jpg /frame.mjpg /firing.bin /events /graph /healthz"
     if roamer.table is not None:
         paths += " /pong +POST /pong/join /pong/move /pong/leave"
+    if roamer.lex is not None:
+        paths += " /words"
+    if roamer.show is not None:
+        paths += " +POST /show"
     print(f"feed on http://{host}:{port}  ({paths}) · camera {CAM_FPS:g} fps")
     rules = fishsim.plasticity_on()
     print("plasticity: " + (", ".join(rules) if rules else

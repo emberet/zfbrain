@@ -143,6 +143,21 @@ directly.
   written by an LLM given the brain's real telemetry and the live token
   numbers, then number-checked; a draft whose numbers aren't in that packet is
   thrown away.
+- **The words it says back are labels, not speech.** You can show it up to four
+  words out of Ogden's 850 — the same list it has, which is why nothing
+  free-text ever reaches a renderer — and what comes back is measured firing
+  plus a word off a table *we* wrote. No model is on that path. The other half
+  of the scheme, where it partitions its own state space and the remaining 792
+  words get stapled onto the clusters, was measured by `tools/probe_lexicon.py`
+  before shipping and did not clear its own bar (0.517 re-identification on
+  held-out time against 0.213 by chance, where we had asked for 3x), so it
+  ships switched off. Nineteen of the 58 hand-written words are struck out too:
+  four axes whose channels turned out to be clocks, and `left`/`right`, whose
+  channel moves only 1.36x its own noise when the world changes. Both
+  retractions are printed on the page beside the claim they retract. It is also
+  silent for the first 200 thoughts of a life — every threshold is stated in
+  standard deviations of its own range, and until it has measured that range
+  there is nothing to compare against. **The fish still has no language.**
 - **There is no internal goal.** No reward circuit feeds back; the goal is set
   outside and read honestly.
 - **The fish did not launch the token. A person did.** `sollive.py` can sign
@@ -162,6 +177,8 @@ calibrate.py     bisects the one number EM cannot give you: synapses -> mV
 fishsim.py       LIF whole-graph simulator; behavior readouts + tests
 retina.py        luminance + optic-flow retina
 roam.py          the roaming browser (allowlist, veto) + the live feed server
+lexicon.py       brain state -> a word; the hand-written table and the codebook
+show.py          strangers show it four of its own words (no model, no API key)
 voice.py         the narrator (observe -> read -> draft -> number-check -> post)
 ```
 
