@@ -923,6 +923,44 @@ thoughts.
 twelve probe conditions. The site reports whatever it shows, including "it uses
 11 of the 850".
 
+### Are greetings structurally silent? No — measured on the live fish
+
+The first greeting ever shown to the running fish came back with *"Its map had
+no word for that state"*, and the obvious worry was that a drawn word panel is,
+to this retina, simply another page of text and could never clear a 1.5 sigma
+threshold — i.e. that the whole `POST /show` path was mute by construction and
+the page was inviting strangers to read back a blank. Three greetings on the
+live fish say otherwise:
+
+| shown | peak Mauthner | escape | said |
+|---|---|---|---|
+| `cold water` | 27.5 Hz | no | — |
+| `sudden bright light` | 40.0 Hz | no | — |
+| `quick fear dark water` | 47.5 Hz | **yes** | `danger` |
+
+So the threshold is tight, not unreachable, and what separates the two outcomes
+is the one all-or-nothing event in this brain: the Mauthner pair crossing its
+escape threshold. `danger` held for six of the ten greeting thoughts and went
+quiet again about three thoughts after the panel stopped drifting, while
+Mauthner was still reading 27-37 Hz — which is the z-score doing its job rather
+than a rate threshold in disguise. Nothing was changed as a result; `show.line`
+already prints the honest sentence for a silent reaction, and a fish that
+answers one greeting in three is the measurement, not a bug to tune away.
+
+A second thing fell out of the same run. The roamer was restarted with
+`.state/lexicon.npz` in place, and the reply to the very first greeting arrived
+with `thoughts 508 · warm true` — no 200-thought mute window. That is the
+persistence fix working end to end across a real restart, which is the only way
+that claim can be tested.
+
+**Ordinary browsing is quieter than greetings.** Five minutes sampled off
+`/state` over a run of `commons.wikimedia.org` category pages: 90-odd
+consecutive thoughts, not one word. Nothing was wrong — the pages are nearly
+identical to each other, so every channel's z sits near zero and no axis clears
+its threshold. It speaks at events (a page change with a startle in it, a
+greeting that lands), not continuously, and the site's transcript should be read
+that way.
+
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
       gentle anti-founder-mode behavior.
