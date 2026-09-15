@@ -256,6 +256,15 @@ class Lexicon:
         self.splits = 0
         self.last = None                               # (idx, word)
         self.last_anchors = []
+        # thoughts that produced at least one word, counted over the life of the
+        # file rather than the process, and printed on the page as a share of
+        # the thoughts actually counted. "It said danger" reads very differently
+        # next to "and it says something on 2% of its thoughts" — a visitor
+        # shown a transcript and no rate will assume the rate is high.
+        self.spoke = 0
+        self.spoke_from = 0       # the thought counting started at, so a file
+                                  # from before the counter does not get a rate
+                                  # averaged over thoughts nobody counted
         # start the clock now, not at the epoch: a 0.0 here means the very
         # first observe() tries to write the file, and every observe() after it
         # until one succeeds — which on a read-only path is a disk call per
@@ -381,7 +390,13 @@ class Lexicon:
         # the first WARMUP thoughts of every life and gives the same brain
         # state a different word either side of a crash.
         self.maybe_save()
-        return self._say(z, dec)
+        said = self._say(z, dec)
+        # Counted here and not in `_say`, because `utter()` shares `_say` and is
+        # the frozen read-only twin — a rate that the act of reading it moves is
+        # not a rate. This is the only per-thought path.
+        if said:
+            self.spoke += 1
+        return said
 
     def observe(self, vec):
         """One thought through the codebook alone. Kept for
@@ -504,7 +519,8 @@ class Lexicon:
             np.savez(tmp, proto=self.proto, count=self.count, total=self.total,
                      scatter=self.scatter, mean=self.mean, var=self.var,
                      slow=self.slow, seen=np.int64(self.seen),
-                     splits=np.int64(self.splits),
+                     splits=np.int64(self.splits), spoke=np.int64(self.spoke),
+                     spoke_from=np.int64(self.spoke_from),
                      cell_word=np.array(self.cell_word, dtype=object),
                      version=np.int64(1))
             os.replace(tmp, self.path)
@@ -526,6 +542,17 @@ class Lexicon:
             self.mean, self.var, self.slow = d["mean"], d["var"], d["slow"]
             self.seen = int(d["seen"])
             self.splits = int(d["splits"])
+            # A file written before the counter existed is still a valid map,
+            # and the version number should not go up for a statistic. But
+            # loading spoke 0 against a `seen` of several hundred would publish
+            # a rate averaged over thoughts nobody counted, which is a wrong
+            # number rather than a missing one. So counting starts from where
+            # the file left off and the page divides by that, not by `seen`.
+            if "spoke" in d.files:
+                self.spoke = int(d["spoke"])
+                self.spoke_from = int(d["spoke_from"])
+            else:
+                self.spoke, self.spoke_from = 0, self.seen
             self.cell_word = [str(w) for w in d["cell_word"]]
         except (OSError, KeyError, ValueError, IndexError) as exc:
             print(f"lexicon load: {exc} — starting from one prototype")
@@ -546,6 +573,12 @@ class Lexicon:
             # Silent until the z-score has a scale, and says which.
             "warmup": WARMUP,
             "warm": bool(self.seen >= WARMUP),
+            # How often it says anything at all. Measured, and on the page,
+            # because a transcript without a rate beside it reads as though the
+            # fish is talking continuously — and five minutes of near-identical
+            # category pages produced no word at all.
+            "spoke": self.spoke,
+            "spoke_of": max(0, self.seen - self.spoke_from),
             "word": self.last[1] if self.last else None,
             "anchors": list(self.last_anchors),
             "top": [{"word": self.cell_word[int(i)],

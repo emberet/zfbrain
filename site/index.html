@@ -190,7 +190,7 @@
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:0 48px;margin-top:24px;border-top:1px solid color-mix(in srgb, var(--color-bg) 22%, transparent);">
       <sc-raw-table style="width:100%;border-collapse:collapse;font-size:14px;">
         <sc-raw-tbody>
-          <sc-for list="{{ wordsStats }}" as="w" hint-placeholder-count="10">
+          <sc-for list="{{ wordsStats }}" as="w" hint-placeholder-count="11">
             <sc-raw-tr>
               <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);color:var(--color-accent-200);vertical-align:top;">{{ w.name }}</sc-raw-td>
               <sc-raw-td style="padding:9px 0;border-bottom:1px solid color-mix(in srgb, var(--color-bg) 14%, transparent);text-align:right;font-family:ui-monospace,Menlo,Consolas,'SF Mono',monospace;font-weight:600;font-size:{{ w.size }};font-feature-settings:'tnum' 1;overflow-wrap:anywhere;">{{ w.value }}</sc-raw-td>
@@ -1012,6 +1012,14 @@ class Component extends DCLogic {
         // nothing to compare against. It says nothing for the first 200
         // thoughts of a life, and that is on the page rather than behind it.
         ['found its own scale yet', lex ? (lex.warm ? 'yes' : 'not yet · ' + n(Math.max(0, (lex.warmup || 200) - lex.thoughts)) + ' thoughts to go') : dash],
+        // A transcript with no rate next to it reads as though the fish talks
+        // continuously. It does not: five minutes over a run of near-identical
+        // Wikimedia category pages produced no word at all, because nothing
+        // changed and so no channel moved off its own mean. It speaks at
+        // events. Divided by the thoughts actually counted, not by every
+        // thought in the file, so a map written before this counter existed
+        // does not get a rate averaged over thoughts nobody counted.
+        ['thoughts that produced a word', lex && lex.spoke_of ? n(lex.spoke) + ' of ' + n(lex.spoke_of) + ' · ' + (100 * lex.spoke / lex.spoke_of).toFixed(1) + '%' : dash],
         ['the map is still moving', lex ? (lex.learning ? 'yes' : 'no · frozen') : dash],
         ['the last word it reached for', lex && lex.word ? lex.word : dash],
       ].map(([name, value]) => ({ name, value, size: String(value).length > 8 ? '13px' : '20px' })),

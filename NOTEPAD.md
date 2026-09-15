@@ -957,9 +957,19 @@ that claim can be tested.
 `/state` over a run of `commons.wikimedia.org` category pages: 90-odd
 consecutive thoughts, not one word. Nothing was wrong — the pages are nearly
 identical to each other, so every channel's z sits near zero and no axis clears
-its threshold. It speaks at events (a page change with a startle in it, a
-greeting that lands), not continuously, and the site's transcript should be read
-that way.
+its threshold. A separate fifteen-minute sample put it at **9 of 430**. It
+speaks at events (a page change with a startle in it, a greeting that lands),
+not continuously.
+
+So the rate went on the page, next to the transcript, as
+`thoughts that produced a word`. A transcript with no rate beside it reads as
+though the fish is talking all the time, and that is a misreading the page was
+inviting. `Lexicon.spoke` counts in `think()` and deliberately **not** in
+`_say()`, because `utter()` shares `_say` and is the frozen read-only twin — a
+rate that the act of reading it moves is not a rate. It is divided by
+`seen - spoke_from` rather than by `seen`, so a map saved before the counter
+existed reports nothing until it has counted something, instead of publishing a
+percentage averaged over thoughts nobody counted.
 
 ## 8 · Nice-to-have (research backlog)
 - [ ] Rheotaxis: whole-field reverse flow → swim against the current, as a
